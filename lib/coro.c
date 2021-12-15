@@ -36,13 +36,13 @@ asm (
     "movq   24(%rsi), %r13\n\t"
     "movq   32(%rsi), %r14\n\t"
     "movq   40(%rsi), %r15\n\t"
-    "movq   96(%rsi), %r10\n\t"
     "movq   48(%rsi), %rdi\n\t"
-    "movq   56(%rsi), %rsi\n\t"
     "movq   64(%rsi), %rdx\n\t"
     "movq   72(%rsi), %rcx\n\t"
     "movq   80(%rsi), %r8\n\t"
     "movq   88(%rsi), %r9\n\t"
+    "movq   96(%rsi), %r10\n\t"   /* save to R10 before RSI changed */
+    "movq   56(%rsi), %rsi\n\t"
     "jmpq   *%r10\n\t"            /* go to old RPI ? */
 );
 #else
