@@ -2,22 +2,26 @@ INCLUDE_PATH = ./lib
 
 CFLAGS   = -Wall -g -O3
 
-test: test.o coro.o
-	$(CC) -o $@ $^ $(CFLAGS)
+OBJS = coro.o \
+		socket.o
 
-test_asm: test.S coro.S
+TEST_OBJS = coro \
+			socket
+
+$(TEST_OBJS): $(OBJS)
+	$(CC) -o $@ $^ tests/$@.c -I $(INCLUDE_PATH) $(CFLAGS)
 
 %.o: lib/%.c
 	$(CC) -o $@ -c $< $(CFLAGS)
 
 %.o: %.c
-	$(CC) -I $(INCLUDE_PATH) -o $@ -c $< $(CFLAGS)
+	$(CC) -o $@ -c $< -I $(INCLUDE_PATH) $(CFLAGS)
 
 %.S: lib/%.c
 	$(CC) -o $@ -S $< $(CFLAGS)
 
 %.S: %.c
-	$(CC) -I $(INCLUDE_PATH) -o $@ -S $< $(CFLAGS)
+	$(CC) -o $@ -S $<  -I $(INCLUDE_PATH) $(CFLAGS)
 
 clean:
-	-@rm test *.o *.S
+	-@rm $(TEST_OBJS) *.o *.S

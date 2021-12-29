@@ -1,8 +1,6 @@
 #ifndef _CORO_H
 #define _CORO_H
 
-#include <stdint.h>
-
 #include "common.h"
 
 #define STACK_SZ    (1 << 12)

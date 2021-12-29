@@ -71,9 +71,9 @@ __attribute__((malloc)) coroutine *co_new(co_func func, void *data)
     /*
      * Set up arguments 0,1,2 before entering entry_point
      */
-    co->context[6]  = (uintptr_t)co;   /* RDI */
-    co->context[7]  = (uintptr_t)func; /* RSI */
-    co->context[8]  = (uintptr_t)data; /* RDX */
+    co->context[6] = (uintptr_t)co;   /* RDI */
+    co->context[7] = (uintptr_t)func; /* RSI */
+    co->context[8] = (uintptr_t)data; /* RDX */
     co->context[12] = (uintptr_t)entry_point;
 
     /*

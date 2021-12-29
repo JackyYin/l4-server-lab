@@ -1,5 +1,5 @@
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "coro.h"
 
@@ -12,13 +12,14 @@ void f(coroutine *co, void *data)
     }
 }
 
-int main() {
+int main()
+{
     char *buf;
     coroutine *co;
     if (!(buf = malloc(128)))
         fprintf(stderr, "failed to alloc for buf...\n");
 
-    if (!(co = co_new(f, (void*) buf)))
+    if (!(co = co_new(f, (void *)buf)))
         fprintf(stderr, "failed to alloc for coroutine...\n");
 
     fprintf(stdout, "sizeof co_context: %lu\n", sizeof(co_context));
