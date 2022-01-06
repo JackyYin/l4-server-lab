@@ -10,7 +10,10 @@ swap_context(co_context *old_context, co_context *new_context)
 #if defined(__x86_64__)
     /*
      * A simplified implementation from glibc ucontext.
-     * parameter order: %rdi, %rsi, %rdx, %rcx, %r8, %r9
+     * parameter order for integers and pointers: %rdi, %rsi, %rdx, %rcx, %r8,
+     * %r9
+     *
+     * The callee-save registers: %rbp, %rbx, %r12, %r13, %r14, %r15
      */
     asm("movq   %rbx, 0(%rdi)\n\t" /* start store old_context */
         "movq   %rbp, 8(%rdi)\n\t"
