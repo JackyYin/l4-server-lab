@@ -92,8 +92,11 @@ __attribute__((malloc)) coroutine *co_new(co_func func, void *data)
      * The stack pointer %rsp must be aligned to a 16-byte boundary before
      * making a call.
      *
-     * See below discussion for why -8 is necessary:
-     * https://stackoverflow.com/questions/62714764/should-rsp-be-aligned-to-16-byte-boundary-before-calling-a-function-in-nasm
+     * When jmpq transfer control to entry_point, The stack address should be
+     * 16n + 8. Because GCC assume entry_point is called from other function, it
+     * will add 16n + 8 bytes for stack alignment. So we -8 our stack top, to
+     * make it 16n + 8 when entering entry_point function.
+     *
      */
     co->context[13] = (rsp & ~0xFul) - 0x8ul;
 
