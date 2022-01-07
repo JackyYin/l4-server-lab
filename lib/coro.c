@@ -103,6 +103,8 @@ __attribute__((malloc)) coroutine *co_new(co_func func, void *data)
     return co;
 }
 
+void co_free(coroutine *co) { free(co); }
+
 void co_yield(coroutine *co, int64_t value)
 {
     co->yielded = value;

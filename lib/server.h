@@ -7,7 +7,11 @@
 
 struct server_connection {
     int fd;
+    uint32_t action;
     coroutine *coro;
+    char *buf;
+    size_t capacity;
+    size_t len;
 };
 
 struct server_info {
@@ -18,6 +22,8 @@ struct server_info {
     struct server_connection conns[];
 };
 
-struct server_info* create_server(const char *addr, uint16_t port);
+struct server_info *create_server(const char *addr, uint16_t port);
+
+void start_listening(struct server_info *svr);
 
 #endif

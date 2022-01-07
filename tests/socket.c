@@ -21,4 +21,6 @@ int main()
 
     printf("%d\n", server->epoll_fd);
     printf("%d\n", server->listen_fd);
+
+    start_listening(server);
 }
