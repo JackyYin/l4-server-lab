@@ -5,13 +5,19 @@
 #include "coro.h"
 #include "socket.h"
 
+#define DEFAULT_SVR_BUFLEN (1024)
+
+struct server_buffer {
+    char *buf;
+    size_t capacity;
+    size_t len;
+};
+
 struct server_connection {
     int fd;
     uint32_t action;
     coroutine *coro;
-    char *buf;
-    size_t capacity;
-    size_t len;
+    struct server_buffer buf;
 };
 
 struct server_info {
@@ -24,6 +30,6 @@ struct server_info {
 
 struct server_info *create_server(const char *addr, uint16_t port);
 
-void start_listening(struct server_info *svr);
+void start_listening(struct server_info *svr, int threads_cnt);
 
 #endif

@@ -1,4 +1,5 @@
 #include <netinet/in.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <sys/epoll.h>
@@ -26,7 +27,7 @@ static int64_t get_nofile_limit()
 
 static int epoll_modify(int epfd, int op, int fd, uint32_t events, void *data)
 {
-    struct epoll_event eevt = {.events = events | EPOLLRDHUP,
+    struct epoll_event eevt = {.events = events | EPOLLRDHUP | EPOLLET,
                                .data = {.ptr = data}};
 
     return epoll_ctl(epfd, op, fd, &eevt);
@@ -36,18 +37,20 @@ struct server_info *create_server(const char *addr, uint16_t port)
 {
     int64_t nfds;
     struct server_info *svr;
+    size_t svr_len;
 
     if (UNLIKELY((nfds = get_nofile_limit()) < 0)) {
         LOG_ERROR("Failed to get max fd count\n");
         goto EXIT;
     }
 
-    if (UNLIKELY((svr = malloc(sizeof(struct server_info) +
-                               sizeof(struct server_connection) * nfds)) ==
-                 NULL)) {
+    svr_len =
+        sizeof(struct server_info) + sizeof(struct server_connection) * nfds;
+    if (UNLIKELY((svr = malloc(svr_len)) == NULL)) {
         LOG_ERROR("Failed to allocate\n");
         goto EXIT;
     }
+    memset(svr, 0, svr_len);
 
     if (UNLIKELY((svr->epoll_fd = epoll_create1(EPOLL_CLOEXEC)) == -1)) {
         LOG_ERROR("Failed to create epoll instance: %s\n", strerror(errno));
@@ -55,11 +58,12 @@ struct server_info *create_server(const char *addr, uint16_t port)
     }
 
     if (UNLIKELY((svr->listen_fd = create_listening_socket(addr, port)) < 0)) {
+        LOG_ERROR("Failed to create listening socket\n");
         goto CLOSE_EPOLL;
     }
 
     if (UNLIKELY((epoll_modify(svr->epoll_fd, EPOLL_CTL_ADD, svr->listen_fd,
-                               EPOLLIN | EPOLLET, NULL)) < 0)) {
+                               EPOLLIN, NULL)) < 0)) {
         goto CLOSE_EPOLL;
     }
 
@@ -76,41 +80,42 @@ EXIT:
     return NULL;
 }
 
-static void co_handle_request(coroutine *co, void *data)
+static void co_echo_handler(coroutine *co, void *data)
 {
+    pthread_t tid = pthread_self();
     struct server_connection *conn = (struct server_connection *)data;
 
     while (1) {
         if (conn->action & EPOLLIN) {
             bool stop = false;
             ssize_t cnt = 0;
-            size_t want_to_read = 0;
+            ssize_t want_to_read = 0;
 
             while (1) {
-                want_to_read = conn->capacity - conn->len;
+                want_to_read = conn->buf.capacity - conn->buf.len;
 
-                if (UNLIKELY(want_to_read == 0)) {
+                if (UNLIKELY(want_to_read <= 0)) {
                     char *newbuf = NULL;
-                    if (UNLIKELY(
-                            (newbuf = realloc(conn->buf, conn->capacity * 2)) !=
-                            NULL)) {
-                        LOG_ERROR("Failed to realloc bigger buf!\n");
+                    if (UNLIKELY((newbuf = realloc(conn->buf.buf,
+                                                   conn->buf.capacity * 2)) ==
+                                 NULL)) {
+                        LOG_ERROR("[%lu] Failed to realloc bigger buf!\n", tid);
                         stop = true;
                         break;
                     }
-                    conn->buf = newbuf;
-                    conn->capacity *= 2;
-                    want_to_read = conn->capacity - conn->len;
+                    conn->buf.buf = newbuf;
+                    conn->buf.capacity *= 2;
+                    want_to_read = conn->buf.capacity - conn->buf.len;
                 }
 
-                cnt = read(conn->fd, (void *)(conn->buf + conn->len),
+                cnt = read(conn->fd, (void *)(conn->buf.buf + conn->buf.len),
                            want_to_read);
 
                 if (UNLIKELY(cnt < 0)) {
                     // EAGAIN or EWOULDBLOCK means that we have read all data
                     if (UNLIKELY(errno != EAGAIN && errno != EWOULDBLOCK)) {
-                        LOG_ERROR("Something went wrong with read: %s\n",
-                                  strerror(errno));
+                        LOG_ERROR("[%lu] Something went wrong with read: %s\n",
+                                  tid, strerror(errno));
                         stop = true;
                     }
                     break;
@@ -122,7 +127,7 @@ static void co_handle_request(coroutine *co, void *data)
                     break;
                 }
 
-                conn->len += cnt;
+                conn->buf.len += cnt;
             }
 
             if (stop) {
@@ -138,21 +143,21 @@ static void co_handle_request(coroutine *co, void *data)
             size_t want_to_write = 0;
 
             while (1) {
-                want_to_write = conn->len - accu;
+                want_to_write = conn->buf.len - accu;
 
                 // Write finished
                 if (want_to_write == 0) {
                     break;
                 }
 
-                cnt =
-                    write(conn->fd, (void *)(conn->buf + accu), want_to_write);
+                cnt = write(conn->fd, (void *)(conn->buf.buf + accu),
+                            want_to_write);
 
                 if (UNLIKELY(cnt < 0)) {
                     // EAGAIN or EWOULDBLOCK means that we have write all data
                     if (UNLIKELY(errno != EAGAIN && errno != EWOULDBLOCK)) {
-                        LOG_ERROR("Something went wrong with write: %s\n",
-                                  strerror(errno));
+                        LOG_ERROR("[%lu] Something went wrong with write: %s\n",
+                                  tid, strerror(errno));
                         stop = true;
                     }
                     break;
@@ -173,7 +178,7 @@ static void co_handle_request(coroutine *co, void *data)
             }
 
             // Now restore the buffer len index
-            conn->len = 0;
+            conn->buf.len = 0;
 
             co_yield(co, EPOLLIN);
         }
@@ -182,6 +187,7 @@ static void co_handle_request(coroutine *co, void *data)
 
 static bool accept_connection(struct server_info *svr)
 {
+    pthread_t tid = pthread_self();
     struct sockaddr_in so_addr;
     socklen_t so_addr_len = sizeof(struct sockaddr_in);
     int64_t accept_fd;
@@ -202,7 +208,7 @@ static bool accept_connection(struct server_info *svr)
             case EHOSTUNREACH:
             case EOPNOTSUPP:
             case ENETUNREACH: {
-                LOG_ERROR("Something went wrong with accept4: %s\n",
+                LOG_ERROR("[%lu] Something went wrong with accept4: %s\n", tid,
                           strerror(errno));
                 continue;
             }
@@ -211,7 +217,7 @@ static bool accept_connection(struct server_info *svr)
                 goto EXIT;
             // Something went wrong
             default: {
-                LOG_ERROR("Something went wrong with accept4: %s\n",
+                LOG_ERROR("[%lu] Something went wrong with accept4: %s\n", tid,
                           strerror(errno));
                 goto ERR_EXIT;
             }
@@ -226,16 +232,19 @@ static bool accept_connection(struct server_info *svr)
         }
 
         if (UNLIKELY((svr->conns[accept_fd].coro =
-                          co_new((co_func)co_handle_request,
+                          co_new((co_func)co_echo_handler,
                                  (void *)&svr->conns[accept_fd])) == NULL)) {
+            LOG_ERROR("[%lu] Failed to create coroutine for fd: %ld\n", tid,
+                      accept_fd);
             close(accept_fd);
             continue;
         }
 
-        if (UNLIKELY((svr->conns[accept_fd].buf = malloc(1024)) == NULL)) {
-            svr->conns[accept_fd].capacity = 0;
+        if (UNLIKELY((svr->conns[accept_fd].buf.buf =
+                          malloc(DEFAULT_SVR_BUFLEN)) == NULL)) {
+            svr->conns[accept_fd].buf.capacity = 0;
         } else {
-            svr->conns[accept_fd].capacity = 1024;
+            svr->conns[accept_fd].buf.capacity = DEFAULT_SVR_BUFLEN;
         }
         svr->conns[accept_fd].fd = accept_fd;
         svr->conns[accept_fd].action = 0;
@@ -248,8 +257,13 @@ ERR_EXIT:
     return false;
 }
 
-void start_listening(struct server_info *svr)
+static void *listen_routine(void *arg)
 {
+    struct server_info *svr = (struct server_info *)arg;
+    pthread_t tid = pthread_self();
+
+    LOG_INFO("pthread ID: %lu\n", tid);
+
     int64_t nfds;
     uint16_t max_events = 100; // TODO: not sure what number is proper
     struct epoll_event *pevts = NULL;
@@ -258,7 +272,7 @@ void start_listening(struct server_info *svr)
 
     if (UNLIKELY((pevts = malloc(sizeof(struct epoll_event) * max_events)) ==
                  NULL)) {
-        LOG_ERROR("Failed to allocate\n");
+        LOG_ERROR("[%lu] Failed to allocate epoll_event array\n", tid);
         goto EXIT;
     }
 
@@ -266,7 +280,7 @@ void start_listening(struct server_info *svr)
         nfds = epoll_wait(svr->epoll_fd, pevts, max_events, -1);
 
         if (UNLIKELY(nfds < 0)) {
-            LOG_ERROR("Something goes wrong with epoll_wait: %s\n",
+            LOG_ERROR("[%lu] Something goes wrong with epoll_wait: %s\n", tid,
                       strerror(errno));
             goto FREE;
         }
@@ -274,42 +288,46 @@ void start_listening(struct server_info *svr)
         // now, foreach ready fd
         for (int i = 0; i < nfds; i++) {
             pevt = pevts + i;
+            conn = pevt->data.ptr;
             // This should be the listen fd
-            if (pevt[i].data.ptr == NULL) {
+            if (conn == NULL) {
                 // Now we ignore error
                 accept_connection(svr);
                 continue;
             }
 
-            conn = pevt[i].data.ptr;
-            if (UNLIKELY(pevt[i].events & EPOLLERR)) {
+            if (UNLIKELY(pevt->events & EPOLLERR)) {
                 close(conn->fd);
                 continue;
             }
 
             // Treating hang-up like error ?
-            if (UNLIKELY((pevt[i].events & EPOLLHUP) ||
-                         (pevt[i].events & EPOLLRDHUP))) {
+            if (UNLIKELY((pevt->events & EPOLLHUP) ||
+                         (pevt->events & EPOLLRDHUP))) {
                 close(conn->fd);
                 continue;
             }
 
             if (UNLIKELY(!conn->coro)) {
-                LOG_ERROR("connection CORO not initialized...\n");
+                LOG_ERROR("[%lu] connection coroutine not initialized...\n",
+                          tid);
                 continue;
             }
 
-            conn->action = pevt[i].events;
+            conn->action = pevt->events;
 
-            // Switch read/write interest list
-            epoll_modify(svr->epoll_fd, EPOLL_CTL_MOD, conn->fd,
-                         co_resume(conn->coro), (void *)conn);
+            int64_t yielded = co_resume(conn->coro);
 
-            if (conn->coro->status == CO_STATUS_STOPPED) {
+            if (UNLIKELY(conn->coro->status == CO_STATUS_STOPPED)) {
+                LOG_ERROR("[%lu] close fd %d\n", tid, conn->fd);
                 close(conn->fd);
                 co_free(conn->coro);
                 conn->coro = NULL;
                 conn->action = 0;
+            } else {
+                // Switch read/write interest list
+                epoll_modify(svr->epoll_fd, EPOLL_CTL_MOD, conn->fd, yielded,
+                             (void *)conn);
             }
         }
     }
@@ -319,4 +337,30 @@ FREE:
     free(pevts);
 
 EXIT:
+    return NULL;
+}
+
+void start_listening(struct server_info *svr, int threads_cnt)
+{
+    pthread_t *threads;
+    if (threads_cnt > 0) {
+
+        if (UNLIKELY((threads = malloc(sizeof(pthread_t) * threads_cnt)) ==
+                     NULL)) {
+            return;
+        }
+
+        for (int i = 0; i < threads_cnt; i++) {
+            pthread_create(&threads[i], NULL, listen_routine, svr);
+        }
+    }
+
+    listen_routine(svr);
+
+    if (threads_cnt > 0) {
+        for (int i = 0; i < threads_cnt; i++) {
+            pthread_join(threads[i], NULL);
+        }
+        free(threads);
+    }
 }
