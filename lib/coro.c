@@ -98,7 +98,7 @@ __attribute__((malloc)) coroutine *co_new(co_func func, void *data)
      * make it 16n + 8 when entering entry_point function.
      *
      */
-    co->context[13] = (rsp & ~0xFul) - 0x8ul;
+    co->context[13] = (rsp & ~0xFul) - 0x08ul;
 
     return co;
 }
