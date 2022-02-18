@@ -8,6 +8,7 @@ OBJS = coro.o \
 		server.o
 
 TEST_OBJS = coro \
+			hashtable \
 			socket
 
 $(TEST_OBJS): $(OBJS)
