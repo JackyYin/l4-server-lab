@@ -14,7 +14,9 @@ static uint64_t get_somaxconn()
         /* fseek(file, 0, SEEK_END); */
         /* fsize = ftell(); */
         /* fseek(file, 0, SEEK_SET); */
-        fscanf(file, "%lu", &somaxconn);
+        if (UNLIKELY(fscanf(file, "%lu", &somaxconn) == 0)) {
+            LOG_ERROR("Failed to read somaxconn value\n");
+        }
     }
 
     return somaxconn;
