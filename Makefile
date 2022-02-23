@@ -1,4 +1,4 @@
-INCLUDE_PATH = ./lib
+INCLUDE_PATH = ./include
 
 CFLAGS   = -Wall -g -O3
 DEFINES  = -D_GNU_SOURCE
