@@ -1,9 +1,9 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include <sys/socket.h>
 #include <unistd.h>
 
 #include "socket.h"
+#include "syscall.h"
 
 static uint64_t get_somaxconn()
 {
@@ -27,9 +27,9 @@ int create_listening_socket(const char *addr, uint16_t port)
     int fd;
     int backlog;
 
-    if (UNLIKELY((fd = socket(AF_INET,
-                              SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0)) <
-                 0)) {
+    if (UNLIKELY(
+            (fd = __socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC,
+                           0)) < 0)) {
         LOG_ERROR("Failed to open socket: %s\n", strerror(errno));
         goto EXIT;
     }
@@ -42,7 +42,7 @@ int create_listening_socket(const char *addr, uint16_t port)
         goto CLEANUP;
     }
 
-    if (UNLIKELY(bind(fd, (struct sockaddr *)&so_addr, sizeof(so_addr)) ==
+    if (UNLIKELY(__bind(fd, (struct sockaddr *)&so_addr, sizeof(so_addr)) ==
                  -1)) {
         LOG_ERROR("Failed to bind: %s\n", strerror(errno));
         goto CLEANUP;
@@ -53,7 +53,7 @@ int create_listening_socket(const char *addr, uint16_t port)
         goto CLEANUP;
     }
 
-    if (UNLIKELY(listen(fd, backlog) == -1)) {
+    if (UNLIKELY(__listen(fd, backlog) == -1)) {
         LOG_ERROR("Failed to listen: %s\n", strerror(errno));
         goto CLEANUP;
     }
@@ -61,7 +61,7 @@ int create_listening_socket(const char *addr, uint16_t port)
     return fd;
 // fall through
 CLEANUP:
-    close(fd);
+    __close(fd);
 
 EXIT:
     return -1;
