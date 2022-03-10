@@ -13,7 +13,7 @@ static int64_t get_nofile_limit()
     struct rlimit rlim;
 
     if (UNLIKELY(__getrlimit(RLIMIT_NOFILE, &rlim) < 0)) {
-        LOG_ERROR("Failed to get rlimit: %s\n", strerror(errno));
+        LOG_ERROR("Failed to get rlimit\n");
         return -1;
     }
 #ifndef NDEBUG
@@ -293,8 +293,7 @@ static void *listen_routine(void *arg)
         nfds = __epoll_wait(epfd, pevts, max_events, -1);
 
         if (UNLIKELY(nfds < 0)) {
-            LOG_ERROR("[%lu] Something goes wrong with epoll_wait: %s\n", tid,
-                      strerror(errno));
+            LOG_ERROR("[%lu] Something goes wrong with epoll_wait\n", tid);
             goto FREE;
         }
 
