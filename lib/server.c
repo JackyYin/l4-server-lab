@@ -92,7 +92,7 @@ static void co_echo_handler(coroutine *co, void *data)
                     want_to_read = conn->buf.capacity - conn->buf.len;
                 }
 
-                cnt = __read(conn->fd, (void *)(conn->buf.buf + conn->buf.len),
+                cnt = read(conn->fd, (void *)(conn->buf.buf + conn->buf.len),
                              want_to_read);
 
                 if (UNLIKELY(cnt < 0)) {
@@ -132,7 +132,7 @@ static void co_echo_handler(coroutine *co, void *data)
                     break;
                 }
 
-                cnt = __write(conn->fd, (void *)(conn->buf.buf + accu),
+                cnt = write(conn->fd, (void *)(conn->buf.buf + accu),
                               want_to_write);
 
                 if (UNLIKELY(cnt < 0)) {
@@ -168,8 +168,8 @@ static bool accept_connection(int epfd, struct server_info *svr)
 
     while (1) {
         accept_fd =
-            __accept4(svr->listen_fd, (struct sockaddr *)&so_addr,
-                      (socklen_t *)&so_addr_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
+            accept4(svr->listen_fd, (struct sockaddr *)&so_addr,
+                    (socklen_t *)&so_addr_len, SOCK_NONBLOCK | SOCK_CLOEXEC);
 
         if (UNLIKELY(accept_fd < 0)) {
             switch (errno) {

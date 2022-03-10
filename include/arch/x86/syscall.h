@@ -44,9 +44,11 @@
 #define syscall_4(NR, rdi, rsi, rdx, r10)                                      \
     ({                                                                         \
         int64_t rax;                                                           \
+        register __typeof__(r10) __r10 __asm__("r10") = (r10);                 \
         asm volatile("syscall\n\t"                                             \
                      : "=a"(rax)                                               \
-                     : "a"(NR), "D"((rdi)), "S"((rsi)), "d"((rdx)), "r"((r10)) \
+                     : "a"(NR), "D"((rdi)), "S"((rsi)), "d"((rdx)),            \
+                       "r"((__r10))                                            \
                      : "rcx", "r11", "memory");                                \
         rax;                                                                   \
     })
@@ -54,10 +56,12 @@
 #define syscall_5(NR, rdi, rsi, rdx, r10, r8)                                  \
     ({                                                                         \
         int64_t rax;                                                           \
+        register __typeof__(r10) __r10 __asm__("r10") = (r10);                 \
+        register __typeof__(r8) __r8 __asm__("r8") = (r8);                     \
         asm volatile("syscall\n\t"                                             \
                      : "=a"(rax)                                               \
                      : "a"(NR), "D"((rdi)), "S"((rsi)), "d"((rdx)),            \
-                       "r"((r10)), "r"((r8))                                   \
+                       "r"((__r10)), "r"((__r8))                               \
                      : "rcx", "r11", "memory");                                \
         rax;                                                                   \
     })
@@ -65,10 +69,13 @@
 #define syscall_6(NR, rdi, rsi, rdx, r10, r8, r9)                              \
     ({                                                                         \
         int64_t rax;                                                           \
+        register __typeof__(r10) __r10 __asm__("r10") = (r10);                 \
+        register __typeof__(r8) __r8 __asm__("r8") = (r8);                     \
+        register __typeof__(r9) __r9 __asm__("r9") = (r9);                     \
         asm volatile("syscall\n\t"                                             \
                      : "=a"(rax)                                               \
                      : "a"(NR), "D"((rdi)), "S"((rsi)), "d"((rdx)),            \
-                       "r"((r10)), "r"((r8)) "r"((r9))                         \
+                       "r"((__r10)), "r"((__r8)) "r"((__r9))                   \
                      : "rcx", "r11", "memory");                                \
         rax;                                                                   \
     })
