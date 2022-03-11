@@ -121,9 +121,8 @@ static void co_echo_handler(coroutine *co, void *data)
                     break;
                 }
 
-                // The remote peer close the connection
+                // read EOF
                 if (UNLIKELY(cnt == 0)) {
-                    stop = true;
                     break;
                 }
 
@@ -137,7 +136,6 @@ static void co_echo_handler(coroutine *co, void *data)
 
             co_yield(co, EPOLLOUT);
         } else if (conn->action & EPOLLOUT) {
-            bool stop = false;
             ssize_t cnt = 0;
             size_t accu = 0;
             size_t want_to_write = 0;
@@ -158,29 +156,21 @@ static void co_echo_handler(coroutine *co, void *data)
                     if (UNLIKELY(errno != EAGAIN && errno != EWOULDBLOCK)) {
                         LOG_ERROR("[%lu] Something went wrong with write: %s\n",
                                   tid, strerror(errno));
-                        stop = true;
                     }
                     break;
                 }
 
                 // The remote peer close the connection
                 if (UNLIKELY(cnt == 0)) {
-                    stop = true;
                     break;
                 }
 
                 accu += cnt;
             }
 
-            if (stop) {
-                // Now the coroutine status becomes CO_STATUS_STOPPED
-                return;
-            }
-
-            // Now restore the buffer len index
             conn->buf.len = 0;
-
-            co_yield(co, EPOLLIN);
+            // Now the coroutine status becomes CO_STATUS_STOPPED
+            return;
         }
     }
 }
@@ -240,11 +230,14 @@ static bool accept_connection(struct server_info *svr)
             continue;
         }
 
-        if (UNLIKELY((svr->conns[accept_fd].buf.buf =
-                          malloc(DEFAULT_SVR_BUFLEN)) == NULL)) {
-            svr->conns[accept_fd].buf.capacity = 0;
-        } else {
-            svr->conns[accept_fd].buf.capacity = DEFAULT_SVR_BUFLEN;
+        // This fd never accept connection before
+        if (!svr->conns[accept_fd].buf.buf) {
+            if (UNLIKELY((svr->conns[accept_fd].buf.buf =
+                              malloc(DEFAULT_SVR_BUFLEN)) == NULL)) {
+                svr->conns[accept_fd].buf.capacity = 0;
+            } else {
+                svr->conns[accept_fd].buf.capacity = DEFAULT_SVR_BUFLEN;
+            }
         }
         svr->conns[accept_fd].fd = accept_fd;
         svr->conns[accept_fd].action = 0;

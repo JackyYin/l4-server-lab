@@ -3,7 +3,7 @@
 
 #include "server.h"
 
-int main()
+int main(int argc, char **argv)
 {
     char addr[] = "0.0.0.0";
     int port = 8080;
@@ -23,6 +23,11 @@ int main()
         printf("%d\n", server->epoll_fd);
         printf("%d\n", server->listen_fd);
 
-        start_listening(server, 4);
+        int additional_thrs = 0;
+
+        if (argc > 1)
+            additional_thrs = atoi(argv[1]);
+
+        start_listening(server, additional_thrs);
     }
 }
