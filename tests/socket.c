@@ -20,8 +20,7 @@ int main(int argc, char **argv)
         create_server((const char *)addr, (uint16_t)port);
 
     if (server != NULL) {
-        printf("%d\n", server->epoll_fd);
-        printf("%d\n", server->listen_fd);
+        printf("listen fd: %d\n", server->listen_fd);
 
         int additional_thrs = 0;
 

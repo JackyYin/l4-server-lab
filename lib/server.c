@@ -27,7 +27,7 @@ static int64_t get_nofile_limit()
 
 static int epoll_modify(int epfd, int op, int fd, uint32_t events, void *data)
 {
-    struct epoll_event eevt = {.events = events | EPOLLRDHUP | EPOLLET,
+    struct epoll_event eevt = {.events = events | EPOLLHUP | EPOLLET,
                                .data = {.ptr = data}};
 
     return epoll_ctl(epfd, op, fd, &eevt);
@@ -52,25 +52,12 @@ struct server_info *create_server(const char *addr, uint16_t port)
     }
     memset(svr, 0, svr_len);
 
-    if (UNLIKELY((svr->epoll_fd = epoll_create1(EPOLL_CLOEXEC)) == -1)) {
-        LOG_ERROR("Failed to create epoll instance: %s\n", strerror(errno));
+    if (UNLIKELY((svr->listen_fd = create_listening_socket(addr, port)) < 0)) {
+        LOG_ERROR("Failed to create listening socket\n");
         goto FREE;
     }
 
-    if (UNLIKELY((svr->listen_fd = create_listening_socket(addr, port)) < 0)) {
-        LOG_ERROR("Failed to create listening socket\n");
-        goto CLOSE_EPOLL;
-    }
-
-    if (UNLIKELY((epoll_modify(svr->epoll_fd, EPOLL_CTL_ADD, svr->listen_fd,
-                               EPOLLIN, NULL)) < 0)) {
-        goto CLOSE_EPOLL;
-    }
-
     return svr;
-// fall through
-CLOSE_EPOLL:
-    close(svr->epoll_fd);
 
 // fall through
 FREE:
@@ -175,7 +162,7 @@ static void co_echo_handler(coroutine *co, void *data)
     }
 }
 
-static bool accept_connection(struct server_info *svr)
+static bool accept_connection(int epfd, struct server_info *svr)
 {
     pthread_t tid = pthread_self();
     struct sockaddr_in so_addr;
@@ -214,9 +201,11 @@ static bool accept_connection(struct server_info *svr)
             }
         }
 
-        if (UNLIKELY((epoll_modify(svr->epoll_fd, EPOLL_CTL_ADD, accept_fd,
-                                   EPOLLIN, (void *)&svr->conns[accept_fd])) <
-                     0)) {
+#ifndef NDEBUG
+        LOG_INFO("[%lu] accept fd: %ld\n", tid, accept_fd);
+#endif
+        if (UNLIKELY((epoll_modify(epfd, EPOLL_CTL_ADD, accept_fd, EPOLLIN,
+                                   (void *)&svr->conns[accept_fd])) < 0)) {
             close(accept_fd);
             continue;
         }
@@ -254,9 +243,25 @@ static void *listen_routine(void *arg)
 {
     struct server_info *svr = (struct server_info *)arg;
     pthread_t tid = pthread_self();
+    int epfd;
 
-    LOG_INFO("pthread ID: %lu\n", tid);
+    if (UNLIKELY((epfd = epoll_create1(EPOLL_CLOEXEC)) == -1)) {
+        LOG_ERROR("[%lu] Failed to create epoll instance: %s\n", tid,
+                  strerror(errno));
+        goto EXIT;
+    }
 
+#ifndef NDEBUG
+    LOG_INFO("[%lu] epfd: %d\n", tid, epfd);
+#endif
+
+    if (UNLIKELY((epoll_modify(epfd, EPOLL_CTL_ADD, svr->listen_fd,
+                               EPOLLIN | EPOLLEXCLUSIVE, NULL)) < 0)) {
+        LOG_ERROR("[%lu] Failed to monitor listen fd: %s\n", tid,
+                  strerror(errno));
+        close(epfd);
+        goto EXIT;
+    }
     int64_t nfds;
     uint16_t max_events = 100; // TODO: not sure what number is proper
     struct epoll_event *pevts = NULL;
@@ -270,7 +275,7 @@ static void *listen_routine(void *arg)
     }
 
     while (1) {
-        nfds = epoll_wait(svr->epoll_fd, pevts, max_events, -1);
+        nfds = epoll_wait(epfd, pevts, max_events, -1);
 
         if (UNLIKELY(nfds < 0)) {
             LOG_ERROR("[%lu] Something goes wrong with epoll_wait: %s\n", tid,
@@ -285,18 +290,19 @@ static void *listen_routine(void *arg)
             // This should be the listen fd
             if (conn == NULL) {
                 // Now we ignore error
-                accept_connection(svr);
+                accept_connection(epfd, svr);
                 continue;
             }
 
             if (UNLIKELY(pevt->events & EPOLLERR)) {
+                LOG_ERROR("[%lu] epoll error\n", tid);
                 close(conn->fd);
                 continue;
             }
 
             // Treating hang-up like error ?
-            if (UNLIKELY((pevt->events & EPOLLHUP) ||
-                         (pevt->events & EPOLLRDHUP))) {
+            if (UNLIKELY((pevt->events & (EPOLLHUP | EPOLLRDHUP)))) {
+                LOG_ERROR("[%lu] epoll hung up\n", tid);
                 close(conn->fd);
                 continue;
             }
@@ -312,14 +318,16 @@ static void *listen_routine(void *arg)
             int64_t yielded = co_resume(conn->coro);
 
             if (UNLIKELY(conn->coro->status == CO_STATUS_STOPPED)) {
-                LOG_ERROR("[%lu] close fd %d\n", tid, conn->fd);
+#ifndef NDEBUG
+                LOG_INFO("[%lu] close fd %d\n", tid, conn->fd);
+#endif
                 close(conn->fd);
                 co_free(conn->coro);
                 conn->coro = NULL;
                 conn->action = 0;
             } else {
                 // Switch read/write interest list
-                epoll_modify(svr->epoll_fd, EPOLL_CTL_MOD, conn->fd, yielded,
+                epoll_modify(epfd, EPOLL_CTL_MOD, conn->fd, yielded,
                              (void *)conn);
             }
         }
@@ -327,6 +335,7 @@ static void *listen_routine(void *arg)
 
 // fall through
 FREE:
+    close(epfd);
     free(pevts);
 
 EXIT:
