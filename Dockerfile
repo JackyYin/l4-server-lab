@@ -4,5 +4,5 @@ ENV DEBIAN_FRONTEND noninteractive
 
 RUN apt-get update -y \
     && apt-get install -y \
-    build-essential manpages-dev gdb \
+    build-essential manpages-dev gdb valgrind \
     netcat
