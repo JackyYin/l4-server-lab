@@ -200,9 +200,27 @@ static bool accept_connection(int epfd, struct server_info *svr)
             }
             }
         }
+
+        /*
+         * We don't accept this fd, because other thread is processing now
+         */
+        uint32_t old_ref_cnt;
+        if ((old_ref_cnt = atomic_load(&(svr->conns[accept_fd].refcnt))) != 0)
+            continue;
+
+        /*
+         * Now we increase refcnt, but race condition is still possible, we have
+         * to make sure only 1 thread at a time
+         */
+        if (!atomic_compare_exchange_weak(&(svr->conns[accept_fd].refcnt),
+                                          &old_ref_cnt, 1)) {
+            continue;
+        }
+
 #ifndef NDEBUG
-        LOG_INFO("[%lu] accept fd: %ld\n", tid, accept_fd);
+        LOG_INFO("[%lu] fd accepted: %ld\n", tid, accept_fd);
 #endif
+
         if (UNLIKELY((epoll_modify(epfd, EPOLL_CTL_ADD, accept_fd, EPOLLIN,
                                    (void *)&svr->conns[accept_fd])) < 0)) {
             close(accept_fd);
@@ -312,6 +330,7 @@ static void *listen_routine(void *arg)
                 LOG_ERROR(
                     "[%lu] connection coroutine not initialized, fd: %d\n", tid,
                     conn->fd);
+                exit(1);
 #endif
                 continue;
             }
@@ -325,8 +344,19 @@ static void *listen_routine(void *arg)
                 co_free(conn->coro);
                 conn->coro = NULL;
                 conn->action = 0;
+
+                /*
+                 * Ref count should be 0 after subtraction
+                 */
 #ifndef NDEBUG
+                uint32_t old_ref_cnt = atomic_fetch_sub(&(conn->refcnt), 1);
+                if (UNLIKELY(old_ref_cnt != 1)) {
+                    LOG_ERROR("[%lu] race condtion on fd: %d\n", tid, conn->fd);
+                    exit(1);
+                }
                 LOG_INFO("[%lu] fd closed: %d\n", tid, conn->fd);
+#else
+                atomic_fetch_sub(&(conn->refcnt), 1);
 #endif
             } else {
                 // Switch read/write interest list

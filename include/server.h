@@ -4,6 +4,7 @@
 #include "common.h"
 #include "coro.h"
 #include "socket.h"
+#include <stdatomic.h>
 
 #define DEFAULT_SVR_BUFLEN (1024)
 
@@ -16,6 +17,7 @@ struct server_buffer {
 struct server_connection {
     int fd;
     uint32_t action;
+    _Atomic uint32_t refcnt;
     coroutine *coro;
     struct server_buffer buf;
 };
