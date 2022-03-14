@@ -1,7 +1,7 @@
 INCLUDE_PATH = ./include
 
 CFLAGS   = -Wall -g -O3 -pthread
-DEFINES  = -D_GNU_SOURCE
+DEFINES  = -D_GNU_SOURCE -DNDEBUG
 
 OBJS = coro.o \
 		socket.o \
