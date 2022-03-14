@@ -47,6 +47,10 @@
 #define __NR_getrlimit 97
 #endif
 
+#ifndef __NR_setrlimit
+#define __NR_setrlimit 160
+#endif
+
 #ifndef __NR_epoll_create
 #define __NR_epoll_create 213
 #endif
@@ -120,6 +124,11 @@ static inline int __accept4(int socket, struct sockaddr *restrict addr,
 static inline int __getrlimit(int resource, struct rlimit *rlim)
 {
     return (int)syscall_2(__NR_getrlimit, resource, rlim);
+}
+
+static inline int __setrlimit(int resource, const struct rlimit *rlim)
+{
+    return (int)syscall_2(__NR_setrlimit, resource, rlim);
 }
 
 static inline int __epoll_create1(int flags)

@@ -16,6 +16,12 @@ static int64_t get_nofile_limit()
         LOG_ERROR("Failed to get rlimit\n");
         return -1;
     }
+
+    rlim.rlim_cur = rlim.rlim_max;
+    if (UNLIKELY(__setrlimit(RLIMIT_NOFILE, &rlim) < 0)) {
+        LOG_ERROR("Failed to set rlimit\n");
+        return -1;
+    }
 #ifndef NDEBUG
     LOG_INFO("nofile soft limit: %lu\n", rlim.rlim_cur);
     LOG_INFO("nofile hard limit: %lu\n", rlim.rlim_max);
