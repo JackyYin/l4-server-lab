@@ -18,10 +18,10 @@ static int64_t get_nofile_limit()
         LOG_ERROR("Failed to get rlimit: %s\n", strerror(errno));
         return -1;
     }
-
+#ifndef NDEBUG
     LOG_INFO("nofile soft limit: %lu\n", rlim.rlim_cur);
     LOG_INFO("nofile hard limit: %lu\n", rlim.rlim_max);
-
+#endif
     return rlim.rlim_cur;
 }
 
@@ -200,7 +200,6 @@ static bool accept_connection(int epfd, struct server_info *svr)
             }
             }
         }
-
 #ifndef NDEBUG
         LOG_INFO("[%lu] accept fd: %ld\n", tid, accept_fd);
 #endif
@@ -218,7 +217,10 @@ static bool accept_connection(int epfd, struct server_info *svr)
             close(accept_fd);
             continue;
         }
-
+#ifndef NDEBUG
+        LOG_INFO("[%lu] created coro %p for fd: %ld\n", tid,
+                 svr->conns[accept_fd].coro, accept_fd);
+#endif
         // This fd never accept connection before
         if (!svr->conns[accept_fd].buf.buf) {
             if (UNLIKELY((svr->conns[accept_fd].buf.buf =
@@ -250,11 +252,9 @@ static void *listen_routine(void *arg)
                   strerror(errno));
         goto EXIT;
     }
-
 #ifndef NDEBUG
     LOG_INFO("[%lu] epfd: %d\n", tid, epfd);
 #endif
-
     if (UNLIKELY((epoll_modify(epfd, EPOLL_CTL_ADD, svr->listen_fd,
                                EPOLLIN | EPOLLEXCLUSIVE, NULL)) < 0)) {
         LOG_ERROR("[%lu] Failed to monitor listen fd: %s\n", tid,
@@ -308,8 +308,11 @@ static void *listen_routine(void *arg)
             }
 
             if (UNLIKELY(!conn->coro)) {
-                LOG_ERROR("[%lu] connection coroutine not initialized...\n",
-                          tid);
+#ifndef NDEBUG
+                LOG_ERROR(
+                    "[%lu] connection coroutine not initialized, fd: %d\n", tid,
+                    conn->fd);
+#endif
                 continue;
             }
 
@@ -318,13 +321,13 @@ static void *listen_routine(void *arg)
             int64_t yielded = co_resume(conn->coro);
 
             if (UNLIKELY(conn->coro->status == CO_STATUS_STOPPED)) {
-#ifndef NDEBUG
-                LOG_INFO("[%lu] close fd %d\n", tid, conn->fd);
-#endif
                 close(conn->fd);
                 co_free(conn->coro);
                 conn->coro = NULL;
                 conn->action = 0;
+#ifndef NDEBUG
+                LOG_INFO("[%lu] fd closed: %d\n", tid, conn->fd);
+#endif
             } else {
                 // Switch read/write interest list
                 epoll_modify(epfd, EPOLL_CTL_MOD, conn->fd, yielded,
