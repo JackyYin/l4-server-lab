@@ -2,20 +2,24 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <sys/epoll.h>
-#include <sys/resource.h>
-#include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
 
 #include "server.h"
+#include "syscall.h"
 
 static int64_t get_nofile_limit()
 {
     struct rlimit rlim;
 
-    if (UNLIKELY(getrlimit(RLIMIT_NOFILE, &rlim) < 0)) {
-        LOG_ERROR("Failed to get rlimit: %s\n", strerror(errno));
+    if (UNLIKELY(__getrlimit(RLIMIT_NOFILE, &rlim) < 0)) {
+        LOG_ERROR("Failed to get rlimit\n");
+        return -1;
+    }
+
+    rlim.rlim_cur = rlim.rlim_max;
+    if (UNLIKELY(__setrlimit(RLIMIT_NOFILE, &rlim) < 0)) {
+        LOG_ERROR("Failed to set rlimit\n");
         return -1;
     }
 #ifndef NDEBUG
@@ -30,7 +34,7 @@ static int epoll_modify(int epfd, int op, int fd, uint32_t events, void *data)
     struct epoll_event eevt = {.events = events | EPOLLHUP | EPOLLET,
                                .data = {.ptr = data}};
 
-    return epoll_ctl(epfd, op, fd, &eevt);
+    return __epoll_ctl(epfd, op, fd, &eevt);
 }
 
 struct server_info *create_server(const char *addr, uint16_t port)
@@ -58,7 +62,6 @@ struct server_info *create_server(const char *addr, uint16_t port)
     }
 
     return svr;
-
 // fall through
 FREE:
     free(svr);
@@ -96,7 +99,7 @@ static void co_echo_handler(coroutine *co, void *data)
                 }
 
                 cnt = read(conn->fd, (void *)(conn->buf.buf + conn->buf.len),
-                           want_to_read);
+                             want_to_read);
 
                 if (UNLIKELY(cnt < 0)) {
                     // EAGAIN or EWOULDBLOCK means that we have read all data
@@ -136,7 +139,7 @@ static void co_echo_handler(coroutine *co, void *data)
                 }
 
                 cnt = write(conn->fd, (void *)(conn->buf.buf + accu),
-                            want_to_write);
+                              want_to_write);
 
                 if (UNLIKELY(cnt < 0)) {
                     // EAGAIN or EWOULDBLOCK means that we have write all data
@@ -232,7 +235,7 @@ static bool accept_connection(int epfd, struct server_info *svr)
                                  (void *)&svr->conns[accept_fd])) == NULL)) {
             LOG_ERROR("[%lu] Failed to create coroutine for fd: %ld\n", tid,
                       accept_fd);
-            close(accept_fd);
+            __close(accept_fd);
             continue;
         }
 #ifndef NDEBUG
@@ -293,11 +296,10 @@ static void *listen_routine(void *arg)
     }
 
     while (1) {
-        nfds = epoll_wait(epfd, pevts, max_events, -1);
+        nfds = __epoll_wait(epfd, pevts, max_events, -1);
 
         if (UNLIKELY(nfds < 0)) {
-            LOG_ERROR("[%lu] Something goes wrong with epoll_wait: %s\n", tid,
-                      strerror(errno));
+            LOG_ERROR("[%lu] Something goes wrong with epoll_wait\n", tid);
             goto FREE;
         }
 
@@ -314,14 +316,14 @@ static void *listen_routine(void *arg)
 
             if (UNLIKELY(pevt->events & EPOLLERR)) {
                 LOG_ERROR("[%lu] epoll error\n", tid);
-                close(conn->fd);
+                __close(conn->fd);
                 continue;
             }
 
             // Treating hang-up like error ?
             if (UNLIKELY((pevt->events & (EPOLLHUP | EPOLLRDHUP)))) {
                 LOG_ERROR("[%lu] epoll hung up\n", tid);
-                close(conn->fd);
+                __close(conn->fd);
                 continue;
             }
 
@@ -340,7 +342,7 @@ static void *listen_routine(void *arg)
             int64_t yielded = co_resume(conn->coro);
 
             if (UNLIKELY(conn->coro->status == CO_STATUS_STOPPED)) {
-                close(conn->fd);
+                __close(conn->fd);
                 co_free(conn->coro);
                 conn->coro = NULL;
                 conn->action = 0;
