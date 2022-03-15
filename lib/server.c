@@ -99,7 +99,7 @@ static void co_echo_handler(coroutine *co, void *data)
                 }
 
                 cnt = read(conn->fd, (void *)(conn->buf.buf + conn->buf.len),
-                             want_to_read);
+                           want_to_read);
 
                 if (UNLIKELY(cnt < 0)) {
                     // EAGAIN or EWOULDBLOCK means that we have read all data
@@ -139,7 +139,7 @@ static void co_echo_handler(coroutine *co, void *data)
                 }
 
                 cnt = write(conn->fd, (void *)(conn->buf.buf + accu),
-                              want_to_write);
+                            want_to_write);
 
                 if (UNLIKELY(cnt < 0)) {
                     // EAGAIN or EWOULDBLOCK means that we have write all data
@@ -262,12 +262,9 @@ ERR_EXIT:
     return false;
 }
 
-static void *listen_routine(void *arg)
+static void epoll_listen_loop(pthread_t tid, struct server_info *svr)
 {
-    struct server_info *svr = (struct server_info *)arg;
-    pthread_t tid = pthread_self();
     int epfd;
-
     if (UNLIKELY((epfd = epoll_create1(EPOLL_CLOEXEC)) == -1)) {
         LOG_ERROR("[%lu] Failed to create epoll instance: %s\n", tid,
                   strerror(errno));
@@ -374,7 +371,11 @@ FREE:
     free(pevts);
 
 EXIT:
-    return NULL;
+}
+
+static void *listen_routine(void *arg)
+{
+    epoll_listen_loop(pthread_self(), (struct server_info *)arg);
 }
 
 void start_listening(struct server_info *svr, int threads_cnt)
