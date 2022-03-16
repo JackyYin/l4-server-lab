@@ -1,3 +1,4 @@
+#include <liburing.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -7,6 +8,12 @@
 
 #include "server.h"
 #include "syscall.h"
+
+#define QD (1024)
+
+#define IO_URING_OP_ACCEPT (1)
+#define IO_URING_OP_READ (2)
+#define IO_URING_OP_WRITE (3)
 
 static int64_t get_nofile_limit()
 {
@@ -37,37 +44,19 @@ static int epoll_modify(int epfd, int op, int fd, uint32_t events, void *data)
     return __epoll_ctl(epfd, op, fd, &eevt);
 }
 
-struct server_info *create_server(const char *addr, uint16_t port)
+static void io_uring_push_accept(int fd, struct io_uring *ring)
 {
-    int64_t nfds;
-    struct server_info *svr;
-    size_t svr_len;
+    struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
+    io_uring_prep_accept(sqe, fd, NULL, NULL, 0);
+    sqe->user_data = IO_URING_OP_ACCEPT;
+}
 
-    if (UNLIKELY((nfds = get_nofile_limit()) < 0)) {
-        LOG_ERROR("Failed to get max fd count\n");
-        goto EXIT;
-    }
-
-    svr_len =
-        sizeof(struct server_info) + sizeof(struct server_connection) * nfds;
-    if (UNLIKELY((svr = malloc(svr_len)) == NULL)) {
-        LOG_ERROR("Failed to allocate\n");
-        goto EXIT;
-    }
-    memset(svr, 0, svr_len);
-
-    if (UNLIKELY((svr->listen_fd = create_listening_socket(addr, port)) < 0)) {
-        LOG_ERROR("Failed to create listening socket\n");
-        goto FREE;
-    }
-
-    return svr;
-// fall through
-FREE:
-    free(svr);
-
-EXIT:
-    return NULL;
+static void io_uring_push_read(int fd, void *buf, size_t buflen,
+                               struct io_uring *ring)
+{
+    struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
+    io_uring_prep_recv(sqe, fd, buf, buflen, 0);
+    sqe->user_data = IO_URING_OP_READ;
 }
 
 static void co_echo_handler(coroutine *co, void *data)
@@ -165,7 +154,7 @@ static void co_echo_handler(coroutine *co, void *data)
     }
 }
 
-static bool accept_connection(int epfd, struct server_info *svr)
+static bool epoll_accept_connection(int epfd, struct server_info *svr)
 {
     pthread_t tid = pthread_self();
     struct sockaddr_in so_addr;
@@ -268,7 +257,7 @@ static void epoll_listen_loop(pthread_t tid, struct server_info *svr)
     if (UNLIKELY((epfd = epoll_create1(EPOLL_CLOEXEC)) == -1)) {
         LOG_ERROR("[%lu] Failed to create epoll instance: %s\n", tid,
                   strerror(errno));
-        goto EXIT;
+        return;
     }
 #ifndef NDEBUG
     LOG_INFO("[%lu] epfd: %d\n", tid, epfd);
@@ -278,7 +267,7 @@ static void epoll_listen_loop(pthread_t tid, struct server_info *svr)
         LOG_ERROR("[%lu] Failed to monitor listen fd: %s\n", tid,
                   strerror(errno));
         close(epfd);
-        goto EXIT;
+        return;
     }
     int64_t nfds;
     uint16_t max_events = 100; // TODO: not sure what number is proper
@@ -289,7 +278,7 @@ static void epoll_listen_loop(pthread_t tid, struct server_info *svr)
     if (UNLIKELY((pevts = malloc(sizeof(struct epoll_event) * max_events)) ==
                  NULL)) {
         LOG_ERROR("[%lu] Failed to allocate epoll_event array\n", tid);
-        goto EXIT;
+        return;
     }
 
     while (1) {
@@ -307,7 +296,7 @@ static void epoll_listen_loop(pthread_t tid, struct server_info *svr)
             // This should be the listen fd
             if (conn == NULL) {
                 // Now we ignore error
-                accept_connection(epfd, svr);
+                epoll_accept_connection(epfd, svr);
                 continue;
             }
 
@@ -369,13 +358,67 @@ static void epoll_listen_loop(pthread_t tid, struct server_info *svr)
 FREE:
     close(epfd);
     free(pevts);
+}
 
-EXIT:
+static void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
+{
+    struct io_uring ring;
+    struct io_uring_params ring_params;
+    struct io_uring_cqe *cqe;
+    memset(&ring_params, 0, sizeof(struct io_uring_params));
+
+    int tmp = io_uring_queue_init_params(QD, &ring, &ring_params);
+    if (UNLIKELY(tmp < 0)) {
+        LOG_ERROR("[%lu] Failed to init io_uring: %s, %d\n", tid,
+                  strerror(errno), tmp);
+        return;
+    }
+
+    if (UNLIKELY(!(ring_params.features & IORING_FEAT_FAST_POLL))) {
+        LOG_ERROR("IORING_FAST_POLL is not available");
+        return;
+    }
+
+    io_uring_push_accept(svr->listen_fd, &ring);
+
+    while (1) {
+        io_uring_submit_and_wait(&ring, 1);
+
+        int ret;
+        unsigned head;
+        unsigned count = 0;
+
+        io_uring_for_each_cqe(&ring, head, cqe)
+        {
+            count++;
+            ret = cqe->res;
+            switch (cqe->user_data) {
+            case IO_URING_OP_ACCEPT: {
+                // check accept4 return
+                if (UNLIKELY(ret < 0)) {
+                    if (ret != -EAGAIN) {
+                        LOG_ERROR(
+                            "[%lu] Something went wrong with accept: %d\n", tid,
+                            ret);
+                        exit(1);
+                    }
+                } else {
+                    LOG_INFO("socket accepted...\n");
+                }
+                /* io_uring_push_read(ret, &ring); */
+                io_uring_push_accept(svr->listen_fd, &ring);
+            }
+            }
+        }
+        /* io_uring_cqe_seen(&ring, cqe); */
+        io_uring_cq_advance(&ring, count);
+    }
 }
 
 static void *listen_routine(void *arg)
 {
-    epoll_listen_loop(pthread_self(), (struct server_info *)arg);
+    io_uring_listen_loop(pthread_self(), (struct server_info *)arg);
+    return NULL;
 }
 
 void start_listening(struct server_info *svr, int threads_cnt)
@@ -401,4 +444,37 @@ void start_listening(struct server_info *svr, int threads_cnt)
         }
         free(threads);
     }
+}
+
+struct server_info *create_server(const char *addr, uint16_t port)
+{
+    int64_t nfds;
+    struct server_info *svr;
+    size_t svr_len;
+
+    if (UNLIKELY((nfds = get_nofile_limit()) < 0)) {
+        LOG_ERROR("Failed to get max fd count\n");
+        goto EXIT;
+    }
+
+    svr_len =
+        sizeof(struct server_info) + sizeof(struct server_connection) * nfds;
+    if (UNLIKELY((svr = malloc(svr_len)) == NULL)) {
+        LOG_ERROR("Failed to allocate\n");
+        goto EXIT;
+    }
+    memset(svr, 0, svr_len);
+
+    if (UNLIKELY((svr->listen_fd = create_listening_socket(addr, port)) < 0)) {
+        LOG_ERROR("Failed to create listening socket\n");
+        goto FREE;
+    }
+
+    return svr;
+// fall through
+FREE:
+    free(svr);
+
+EXIT:
+    return NULL;
 }

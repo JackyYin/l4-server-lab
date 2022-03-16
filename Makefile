@@ -1,6 +1,6 @@
 INCLUDE_PATH = ./include
 
-CFLAGS   = -Wall -g -O3 -pthread
+CFLAGS   = -Wall -g -O3 -pthread -luring
 DEFINES  = -D_GNU_SOURCE -DNDEBUG
 
 OBJS = coro.o \
