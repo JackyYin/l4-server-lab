@@ -59,6 +59,33 @@ static void io_uring_push_read(int fd, void *buf, size_t buflen,
     sqe->user_data = IO_URING_OP_READ;
 }
 
+static int __prepare_connection(pthread_t tid, int fd, struct server_info *svr,
+                                co_func handler)
+{
+    struct server_connection *conn = &svr->conns[fd];
+    if (UNLIKELY((conn->coro = co_new((co_func)handler, (void *)conn)) ==
+                 NULL)) {
+        LOG_ERROR("[%lu] Failed to create coroutine for fd: %ld\n", tid, fd);
+        return -1;
+    } else {
+#ifndef NDEBUG
+        LOG_INFO("[%lu] created coro %p for fd: %ld\n", tid, conn->coro, fd);
+#endif
+    }
+
+    // This fd never accept connection before
+    if (!conn->buf.buf) {
+        if (UNLIKELY((conn->buf.buf = malloc(DEFAULT_SVR_BUFLEN)) == NULL)) {
+            conn->buf.capacity = 0;
+        } else {
+            conn->buf.capacity = DEFAULT_SVR_BUFLEN;
+        }
+    }
+    conn->fd = fd;
+    conn->action = 0;
+    return 0;
+}
+
 static void co_echo_handler(coroutine *co, void *data)
 {
     pthread_t tid = pthread_self();
@@ -219,29 +246,11 @@ static bool epoll_accept_connection(int epfd, struct server_info *svr)
             continue;
         }
 
-        if (UNLIKELY((svr->conns[accept_fd].coro =
-                          co_new((co_func)co_echo_handler,
-                                 (void *)&svr->conns[accept_fd])) == NULL)) {
-            LOG_ERROR("[%lu] Failed to create coroutine for fd: %ld\n", tid,
-                      accept_fd);
+        if (UNLIKELY(__prepare_connection(tid, accept_fd, svr,
+                                          co_echo_handler) < 0)) {
             __close(accept_fd);
             continue;
         }
-#ifndef NDEBUG
-        LOG_INFO("[%lu] created coro %p for fd: %ld\n", tid,
-                 svr->conns[accept_fd].coro, accept_fd);
-#endif
-        // This fd never accept connection before
-        if (!svr->conns[accept_fd].buf.buf) {
-            if (UNLIKELY((svr->conns[accept_fd].buf.buf =
-                              malloc(DEFAULT_SVR_BUFLEN)) == NULL)) {
-                svr->conns[accept_fd].buf.capacity = 0;
-            } else {
-                svr->conns[accept_fd].buf.capacity = DEFAULT_SVR_BUFLEN;
-            }
-        }
-        svr->conns[accept_fd].fd = accept_fd;
-        svr->conns[accept_fd].action = 0;
     }
 
 EXIT:
@@ -405,8 +414,17 @@ static void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
                 } else {
                     LOG_INFO("socket accepted...\n");
                 }
-                /* io_uring_push_read(ret, &ring); */
+
+                if (UNLIKELY(__prepare_connection(tid, ret, svr,
+                                                  co_echo_handler) < 0))
+                    goto ACCEPT_AGAIN;
+
+                // push new fd to wait for read
+                io_uring_push_read(ret, conn->buf.buf, conn->buf.capacity,
+                                   &ring);
+            ACCEPT_AGAIN:
                 io_uring_push_accept(svr->listen_fd, &ring);
+                break;
             }
             }
         }
