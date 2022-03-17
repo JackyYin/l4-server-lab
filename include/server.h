@@ -8,6 +8,18 @@
 
 #define DEFAULT_SVR_BUFLEN (1024)
 
+#define QD (1024)
+
+#define IO_URING_OP_ACCEPT (1)
+#define IO_URING_OP_READ (2)
+#define IO_URING_OP_WRITE (3)
+
+// this structure can't be larger than 64 bytes
+struct io_uring_user_data {
+    void *ptr; // point to connection
+    int op;
+};
+
 struct server_buffer {
     char *buf;
     size_t capacity;

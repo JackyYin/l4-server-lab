@@ -9,12 +9,6 @@
 #include "server.h"
 #include "syscall.h"
 
-#define QD (1024)
-
-#define IO_URING_OP_ACCEPT (1)
-#define IO_URING_OP_READ (2)
-#define IO_URING_OP_WRITE (3)
-
 static int64_t get_nofile_limit()
 {
     struct rlimit rlim;
@@ -48,21 +42,27 @@ static void io_uring_push_accept(int fd, struct io_uring *ring)
 {
     struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
     io_uring_prep_accept(sqe, fd, NULL, NULL, 0);
-    sqe->user_data = IO_URING_OP_ACCEPT;
+
+    struct io_uring_user_data *ud =
+        (struct io_uring_user_data *)&sqe->user_data;
+    ud->op = IO_URING_OP_ACCEPT:
 }
 
-static void io_uring_push_read(int fd, void *buf, size_t buflen,
+static void io_uring_push_read(int fd, void *buf, size_t buflen, void *conn,
                                struct io_uring *ring)
 {
     struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
     io_uring_prep_recv(sqe, fd, buf, buflen, 0);
-    sqe->user_data = IO_URING_OP_READ;
+
+    struct io_uring_user_data *ud =
+        (struct io_uring_user_data *)&sqe->user_data;
+    ud->op = IO_URING_OP_READ;
+    ud->ptr = conn;
 }
 
-static int __prepare_connection(pthread_t tid, int fd, struct server_info *svr,
-                                co_func handler)
+static int __prepare_connection(pthread_t tid, int fd,
+                                struct server_connection *conn, co_func handler)
 {
-    struct server_connection *conn = &svr->conns[fd];
     if (UNLIKELY((conn->coro = co_new((co_func)handler, (void *)conn)) ==
                  NULL)) {
         LOG_ERROR("[%lu] Failed to create coroutine for fd: %ld\n", tid, fd);
@@ -219,20 +219,19 @@ static bool epoll_accept_connection(int epfd, struct server_info *svr)
             }
             }
         }
-
+        struct server_connection *conn = &svr->conns[accept_fd];
         /*
          * We don't accept this fd, because other thread is processing now
          */
         uint32_t old_ref_cnt;
-        if ((old_ref_cnt = atomic_load(&(svr->conns[accept_fd].refcnt))) != 0)
+        if ((old_ref_cnt = atomic_load(&(conn->refcnt))) != 0)
             continue;
 
         /*
          * Now we increase refcnt, but race condition is still possible, we have
          * to make sure only 1 thread at a time
          */
-        if (!atomic_compare_exchange_weak(&(svr->conns[accept_fd].refcnt),
-                                          &old_ref_cnt, 1)) {
+        if (!atomic_compare_exchange_weak(&(conn->refcnt), &old_ref_cnt, 1)) {
             continue;
         }
 
@@ -241,12 +240,12 @@ static bool epoll_accept_connection(int epfd, struct server_info *svr)
 #endif
 
         if (UNLIKELY((epoll_modify(epfd, EPOLL_CTL_ADD, accept_fd, EPOLLIN,
-                                   (void *)&svr->conns[accept_fd])) < 0)) {
+                                   (void *)conn)) < 0)) {
             close(accept_fd);
             continue;
         }
 
-        if (UNLIKELY(__prepare_connection(tid, accept_fd, svr,
+        if (UNLIKELY(__prepare_connection(tid, accept_fd, conn,
                                           co_echo_handler) < 0)) {
             __close(accept_fd);
             continue;
@@ -401,8 +400,9 @@ static void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
         {
             count++;
             ret = cqe->res;
-            switch (cqe->user_data) {
-            case IO_URING_OP_ACCEPT: {
+            struct io_uring_user_data *ud =
+                (struct io_uring_user_data *)&cqe->user_data;
+            if (ud->op == IO_URING_OP_ACCEPT) {
                 // check accept4 return
                 if (UNLIKELY(ret < 0)) {
                     if (ret != -EAGAIN) {
@@ -415,17 +415,22 @@ static void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
                     LOG_INFO("socket accepted...\n");
                 }
 
-                if (UNLIKELY(__prepare_connection(tid, ret, svr,
+                struct server_connection *conn = &svr->conns[ret];
+                if (UNLIKELY(__prepare_connection(tid, ret, conn,
                                                   co_echo_handler) < 0))
                     goto ACCEPT_AGAIN;
 
                 // push new fd to wait for read
                 io_uring_push_read(ret, conn->buf.buf, conn->buf.capacity,
-                                   &ring);
+                                   (void *)conn, &ring);
             ACCEPT_AGAIN:
                 io_uring_push_accept(svr->listen_fd, &ring);
-                break;
-            }
+            } else if (ud->ptr) {
+                struct server_connection *conn =
+                    (struct server_connection *)ud->ptr;
+                int64_t yielded = co_resume(conn->coro);
+            } else {
+                LOG_ERROR("Something went wrong, no user_data in cqe!\n");
             }
         }
         /* io_uring_cqe_seen(&ring, cqe); */
