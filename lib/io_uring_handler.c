@@ -31,6 +31,17 @@ static void io_uring_push_read(int fd, void *buf, size_t buflen,
     sqe->user_data = (uint64_t)conn;
 }
 
+static void io_uring_push_write(int fd, void *buf, size_t buflen,
+                                struct server_connection *conn,
+                                struct io_uring *ring)
+{
+    struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
+    io_uring_prep_send(sqe, fd, buf, buflen, 0);
+
+    conn->action = IO_URING_OP_WRITE;
+    sqe->user_data = (uint64_t)conn;
+}
+
 static void io_uring_co_echo_handler(coroutine *co, void *data) {}
 
 void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
@@ -51,9 +62,8 @@ void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
         return;
     }
 
-    struct server_connection *listen_conn = &svr->conns[svr->listen_fd];
-    io_uring_push_accept(svr->listen_fd, listen_conn, &ring);
-
+    struct server_connection *conn = &svr->conns[svr->listen_fd];
+    io_uring_push_accept(svr->listen_fd, conn, &ring);
     while (1) {
         io_uring_submit_and_wait(&ring, 1);
         int ret;
@@ -63,8 +73,7 @@ void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
         {
             count++;
             ret = cqe->res;
-            struct server_connection *conn =
-                (struct server_connection *)cqe->user_data;
+            conn = (struct server_connection *)cqe->user_data;
             if (UNLIKELY(!conn)) {
                 LOG_ERROR("Something went wrong, no user_data in cqe!\n");
                 continue;
@@ -79,12 +88,10 @@ void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
                     LOG_ERROR("[%lu] Something went wrong with accept: %d\n",
                               tid, ret);
                     exit(1);
-                } else {
-                    LOG_INFO("socket accepted...\n");
                 }
 
-                struct server_connection *acc_conn = &svr->conns[ret];
-                if (UNLIKELY(__prepare_connection(tid, ret, acc_conn,
+                conn = &svr->conns[ret];
+                if (UNLIKELY(__prepare_connection(tid, ret, conn,
                                                   io_uring_co_echo_handler) <
                              0)) {
                     LOG_ERROR("Failed to create connection...\n");
@@ -93,13 +100,33 @@ void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
                 }
 
                 // push new fd to wait for read
-                io_uring_push_read(ret, acc_conn->buf.buf,
-                                   acc_conn->buf.capacity, (void *)acc_conn,
-                                   &ring);
+                io_uring_push_read(ret, conn->buf.buf, conn->buf.capacity,
+                                   (void *)conn, &ring);
             ACCEPT_AGAIN:
-                io_uring_push_accept(svr->listen_fd, listen_conn, &ring);
-            } else {
-                /* co_resume(conn->coro); */
+                io_uring_push_accept(svr->listen_fd,
+                                     &svr->conns[svr->listen_fd], &ring);
+            } else if (conn->action == IO_URING_OP_READ) {
+                if (UNLIKELY(ret < 0)) {
+                    LOG_ERROR("read error: %d...\n", ret);
+                    exit(1);
+                }
+
+                if (UNLIKELY(ret == 0)) {
+                    LOG_INFO("remote peer closed\n");
+                    __close(conn->fd);
+                    continue;
+                }
+
+                // push new fd to wait for write
+                io_uring_push_write(conn->fd, conn->buf.buf, ret, (void *)conn,
+                                    &ring);
+            } else if (conn->action == IO_URING_OP_WRITE) {
+                if (ret < conn->buf.capacity) {
+                    __close(conn->fd);
+                } else {
+                    io_uring_push_read(conn->fd, conn->buf.buf, ret,
+                                       (void *)conn, &ring);
+                }
             }
         }
         /* io_uring_cqe_seen(&ring, cqe); */
