@@ -30,4 +30,6 @@ void co_yield(coroutine *coro, int64_t value);
 
 int64_t co_resume(coroutine *coro);
 
+int64_t co_resume_value(coroutine *coro, int64_t value);
+
 #endif

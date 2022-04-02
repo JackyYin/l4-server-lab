@@ -116,3 +116,9 @@ int64_t co_resume(coroutine *co)
     swap_context(&co->caller, &co->context);
     return co->yielded;
 }
+
+int64_t co_resume_value(coroutine *co, int64_t value)
+{
+    co->yielded = value;
+    return co_resume(co);
+}

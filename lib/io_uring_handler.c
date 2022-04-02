@@ -42,7 +42,48 @@ static void io_uring_push_write(int fd, void *buf, size_t buflen,
     sqe->user_data = (uint64_t)conn;
 }
 
-static void io_uring_co_echo_handler(coroutine *co, void *data) {}
+static void io_uring_co_echo_handler(coroutine *co, void *data)
+{
+    struct server_connection *conn = (struct server_connection *)data;
+
+    while (1) {
+        int to_yield = 0;
+        int ret = co->yielded;
+
+        switch (conn->action) {
+        case IO_URING_OP_READ: {
+            if (UNLIKELY(ret < 0)) {
+                LOG_ERROR("read error: %d...\n", ret);
+                goto YIELD;
+            }
+
+            if (UNLIKELY(ret == 0)) {
+                LOG_INFO("remote peer closed\n");
+                goto RESET;
+            }
+
+            to_yield = IO_URING_OP_WRITE;
+            goto YIELD;
+        }
+        case IO_URING_OP_WRITE: {
+            // this mean we've read all data
+            if (ret < conn->buf.capacity) {
+                goto RESET;
+            }
+
+            to_yield = IO_URING_OP_READ;
+            goto YIELD;
+        }
+        }
+    RESET:
+        __close(conn->fd);
+        memset(conn->buf.buf, 0, conn->buf.capacity);
+        conn->buf.len = 0;
+
+    YIELD:
+        co_yield(co, to_yield);
+    }
+}
 
 void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
 {
@@ -105,28 +146,24 @@ void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
             ACCEPT_AGAIN:
                 io_uring_push_accept(svr->listen_fd,
                                      &svr->conns[svr->listen_fd], &ring);
-            } else if (conn->action == IO_URING_OP_READ) {
-                if (UNLIKELY(ret < 0)) {
-                    LOG_ERROR("read error: %d...\n", ret);
-                    exit(1);
-                }
+                continue;
+            }
 
-                if (UNLIKELY(ret == 0)) {
-                    LOG_INFO("remote peer closed\n");
-                    __close(conn->fd);
-                    continue;
-                }
+            if (UNLIKELY(!conn->coro)) {
+                LOG_ERROR("Something went wrong, coroutine not found!\n");
+                continue;
+            }
 
+            switch (co_resume_value(conn->coro, ret)) {
+            case IO_URING_OP_WRITE:
                 // push new fd to wait for write
                 io_uring_push_write(conn->fd, conn->buf.buf, ret, (void *)conn,
                                     &ring);
-            } else if (conn->action == IO_URING_OP_WRITE) {
-                if (ret < conn->buf.capacity) {
-                    __close(conn->fd);
-                } else {
-                    io_uring_push_read(conn->fd, conn->buf.buf, ret,
-                                       (void *)conn, &ring);
-                }
+                break;
+            case IO_URING_OP_READ:
+                io_uring_push_read(conn->fd, conn->buf.buf, ret, (void *)conn,
+                                   &ring);
+                break;
             }
         }
         /* io_uring_cqe_seen(&ring, cqe); */
