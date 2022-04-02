@@ -1,10 +1,12 @@
 INCLUDE_PATH = ./include
 
-CFLAGS   = -Wall -g -O3 -pthread
+CFLAGS   = -Wall -g -O3 -pthread -luring
 DEFINES  = -D_GNU_SOURCE -DNDEBUG
 
 OBJS = coro.o \
 		socket.o \
+		epoll_handler.o \
+		io_uring_handler.o \
 		server.o
 
 TEST_OBJS = coro \
