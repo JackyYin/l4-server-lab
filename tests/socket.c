@@ -3,6 +3,18 @@
 
 #include "server.h"
 
+ROUTER(simple)
+{
+    sprintf(response->buf, "Something interesting...\n");
+    response->status = 200;
+
+    SET_RESPONSE_MIME("text/plain");
+    SET_RESPONSE_HEADER("Header1", "Value1");
+    SET_RESPONSE_HEADER("Header2", "Value2");
+    SET_RESPONSE_HEADER("Header3", "Value3");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     char addr[] = "0.0.0.0";
