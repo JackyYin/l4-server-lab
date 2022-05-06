@@ -3,10 +3,23 @@
 
 #include "common.h"
 #include "coro.h"
+#include "kv.h"
 #include "socket.h"
 #include "syscall.h"
 #include <pthread.h>
 #include <stdatomic.h>
+
+#define METHOD_GET (1 << 0)
+#define METHOD_HEAD (1 << 1)
+#define METHOD_POST (1 << 2)
+#define METHOD_PUT (1 << 3)
+#define METHOD_DELETE (1 << 4)
+#define METHOD_CONNECT (1 << 5)
+#define METHOD_OPTIONS (1 << 6)
+#define METHOD_TRACE (1 << 7)
+#define METHOD_PATCH (1 << 8)
+
+#define METHOD_TO_INT(X) METHOD_##X
 
 #define DEFAULT_SVR_BUFLEN (1024)
 
@@ -32,31 +45,63 @@ struct server_info {
     struct server_connection conns[];
 };
 
-static int __prepare_connection(pthread_t tid, int fd,
-                                struct server_connection *conn, co_func handler)
-{
-    if (UNLIKELY((conn->coro = co_new((co_func)handler, (void *)conn)) ==
-                 NULL)) {
-        LOG_ERROR("[%lu] Failed to create coroutine for fd: %d\n", tid, fd);
-        return -1;
-    } else {
-#ifndef NDEBUG
-        LOG_INFO("[%lu] created coro %p for fd: %d\n", tid, conn->coro, fd);
-#endif
-    }
+struct http_request {
+    int method;
+    char *path;     // should be null-terminated
+    char *protocol; // should be null-terminated
+    struct kv *query;
+    struct kv *headers;
+};
 
-    // This fd never accept connection before
-    if (!conn->buf.buf) {
-        if (UNLIKELY((conn->buf.buf = malloc(DEFAULT_SVR_BUFLEN)) == NULL)) {
-            conn->buf.capacity = 0;
-        } else {
-            conn->buf.capacity = DEFAULT_SVR_BUFLEN;
-        }
-    }
-    conn->fd = fd;
-    conn->action = 0;
-    return 0;
-}
+struct http_response {
+    int status;
+    struct kv *headers;
+    char buf[1024];
+};
+
+typedef int(route_handler)(struct http_request *, struct http_response *);
+
+struct router {
+    const char *path;
+    route_handler *fp;
+    int method;
+} __attribute__((aligned(32)));
+
+#define ROUTER_SYMBOL_NAME(name) #name
+
+#define ROUTER_SYMBOL_START(name) __start_##name
+
+#define ROUTER_SYMBOL_STOP(name) __stop_##name
+
+#define FOREACH_ROUTER_SEC(secname, iter)                                      \
+    extern const struct router ROUTER_SYMBOL_START(secname)[];                 \
+    extern const struct router ROUTER_SYMBOL_STOP(secname)[];                  \
+    for (iter = ROUTER_SYMBOL_START(secname);                                  \
+         iter < ROUTER_SYMBOL_STOP(secname);                                   \
+         iter = (const struct router *)((uintptr_t)iter + 32))
+
+#define FOREACH_ROUTER(iter) FOREACH_ROUTER_SEC(ROUTER, iter)
+
+/*
+ * We force macro expansion of __COUNTER__ from _ROUTER to __ROUTER
+ * */
+#define __ROUTER(name, m, p)                                                   \
+    static int ROUTER##name##m(struct http_request *, struct http_response *); \
+    __attribute__((                                                            \
+        used,                                                                  \
+        section(ROUTER_SYMBOL_NAME(                                            \
+            ROUTER)))) static const struct router ROUTER##name##m##info = {    \
+        .method = METHOD_TO_INT(m), .path = #p, .fp = ROUTER##name##m};        \
+    static int ROUTER##name##m(                                                \
+        __attribute__((unused)) struct http_request *request,                  \
+        __attribute__((unused)) struct http_response *response)
+#define _ROUTER(name, method, path) __ROUTER(name, method, path)
+#define ROUTER(method, path) _ROUTER(__COUNTER__, method, path)
+
+#define SET_RESPONSE_HEADER(k, v) kv_set_key_value(response->headers, k, v)
+
+#define SET_RESPONSE_MIME(v)                                                   \
+    kv_set_key_value(response->headers, "Content-Type", v)
 
 void epoll_listen_loop(pthread_t tid, struct server_info *svr);
 void io_uring_listen_loop(pthread_t tid, struct server_info *svr);
