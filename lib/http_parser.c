@@ -9,15 +9,15 @@ static int str_to_int32(char *buf)
     return val;
 }
 
-ROUTER(thisisateapot) { return 0; }
+ROUTER(GET, thisisateapot) { return 0; }
 
-void *find_router(const char *path)
+void *find_router(const char *path, int method)
 {
     const struct router *iter;
 
     FOREACH_ROUTER(iter)
     {
-        if (strcmp(path, iter->path) == 0) {
+        if ((method & iter->method) && strcmp(path, iter->path) == 0) {
             return iter->fp;
         }
     }
@@ -61,7 +61,6 @@ static int http_parse_path(struct http_request *req, char **ppbuf, char *bufend)
     if (UNLIKELY(start[0] != '/'))
         goto BAD_REQ;
 
-    start++;
     char *end_of_path = strchr(start, ' ');
     if (UNLIKELY(!end_of_path))
         goto BAD_REQ;

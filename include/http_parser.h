@@ -4,16 +4,6 @@
 #include "hashtable.h"
 #include "server.h"
 
-#define METHOD_GET (1 << 0)
-#define METHOD_HEAD (1 << 1)
-#define METHOD_POST (1 << 2)
-#define METHOD_PUT (1 << 3)
-#define METHOD_DELETE (1 << 4)
-#define METHOD_CONNECT (1 << 5)
-#define METHOD_OPTIONS (1 << 6)
-#define METHOD_TRACE (1 << 7)
-#define METHOD_PATCH (1 << 8)
-
 #define STR_TO_INT32(a, b, c, d)                                               \
     (int)((a) | ((b) << 8) | ((c) << 16) | ((d) << 24))
 
@@ -58,7 +48,7 @@ static struct {
 
 int http_parse_request(struct http_request *req, char *buf, size_t buflen);
 
-void *find_router(const char *path);
+void *find_router(const char *path, int method);
 
 int http_compose_response(struct http_request *, struct http_response *,
                           char *);

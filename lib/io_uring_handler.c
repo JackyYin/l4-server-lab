@@ -144,7 +144,7 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
             }
 
             route_handler *rh = NULL;
-            if ((rh = find_router(req.path)) == NULL) {
+            if ((rh = find_router(req.path, req.method)) == NULL) {
                 char res[] = RESPONSE_404;
                 io_uring_push_write(conn->fd, res, strlen(res), (void *)conn,
                                     &ring);

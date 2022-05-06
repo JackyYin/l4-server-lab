@@ -3,9 +3,21 @@
 
 #include "server.h"
 
-ROUTER(simple)
+ROUTER(GET, /simple/x)
 {
-    sprintf(response->buf, "Something interesting...\n");
+    sprintf(response->buf, "Something interesting x...\n");
+    response->status = 200;
+
+    SET_RESPONSE_MIME("text/plain");
+    SET_RESPONSE_HEADER("Header1", "Value1");
+    SET_RESPONSE_HEADER("Header2", "Value2");
+    SET_RESPONSE_HEADER("Header3", "Value3");
+    return 0;
+}
+
+ROUTER(GET, /simple/y)
+{
+    sprintf(response->buf, "Something interesting y...\n");
     response->status = 200;
 
     SET_RESPONSE_MIME("text/plain");
