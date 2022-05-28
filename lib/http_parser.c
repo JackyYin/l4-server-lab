@@ -1,3 +1,6 @@
+#include <fcntl.h>
+#include <sys/mman.h>
+
 #include "http_parser.h"
 
 static int str_to_int32(char *buf)
@@ -11,14 +14,14 @@ static int str_to_int32(char *buf)
 
 ROUTER(GET, thisisateapot) { return 0; }
 
-void *find_router(const char *path, int method)
+const struct router *find_router(const char *path, int method)
 {
     const struct router *iter;
 
     FOREACH_ROUTER(iter)
     {
         if ((method & iter->method) && strcmp(path, iter->path) == 0) {
-            return iter->fp;
+            return iter;
         }
     }
     return NULL;
@@ -55,7 +58,7 @@ static int http_parse_path(struct http_request *req, char **ppbuf, char *bufend)
 {
     char *start = *ppbuf;
 
-    if (UNLIKELY(bufend - start < sizeof("/ HTTP/0.0\r\n")))
+    if (UNLIKELY((size_t)(bufend - start) < sizeof("/ HTTP/0.0\r\n")))
         goto BAD_REQ;
 
     if (UNLIKELY(start[0] != '/'))
@@ -98,7 +101,7 @@ static int http_parse_protocol(struct http_request *req, char **ppbuf,
                                char *bufend)
 {
     char *start = *ppbuf;
-    if (UNLIKELY(bufend - start < sizeof("HTTP/0.0\r\n")))
+    if (UNLIKELY((size_t)(bufend - start) < sizeof("HTTP/0.0\r\n")))
         goto BAD_REQ;
 
     char *end_of_line = strchr(start, '\r');
@@ -126,7 +129,7 @@ static int http_parse_headers(struct http_request *req, char **ppbuf,
         if (UNLIKELY(!end_of_header_line))
             break;
         // we reach end of header section
-        if (UNLIKELY(end_of_header_line - start < sizeof("H: V"))) {
+        if (UNLIKELY((size_t)(end_of_header_line - start) < sizeof("H: V"))) {
             start = end_of_header_line;
             break;
         }
@@ -203,29 +206,74 @@ BAD_REQ:
     return 0;
 }
 
+int global_static_router(__attribute__((unused)) struct http_request *request,
+                         __attribute__((unused)) struct http_response *response,
+                         const char *filepath)
+{
+    int fd;
+    static struct stat filestat;
+    static void *data;
+
+    if (data) {
+        goto STORE_BUF;
+    }
+
+    if (UNLIKELY((fd = __open(filepath, O_RDONLY)) < 0)) {
+        LOG_INFO("Failed to open file...\n");
+        return 0;
+    }
+
+    if (UNLIKELY(__fstat(fd, &filestat) < 0)) {
+        LOG_INFO("Failed to retrieve file stat...\n");
+        __close(fd);
+        return 0;
+    }
+
+    data = mmap(NULL, filestat.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (UNLIKELY(data == MAP_FAILED)) {
+        LOG_INFO("Failed to mmap...\n");
+        __close(fd);
+        return 0;
+    }
+
+STORE_BUF:
+    response->file = data;
+    response->file_sz = filestat.st_size;
+    response->status = 200;
+    SET_RES_MIME("text/html");
+    return 0;
+}
+
 int http_compose_response(struct http_request *req, struct http_response *res,
-                          char *final)
+                          string_t *final)
 {
     if (UNLIKELY(!req->protocol))
         goto BAD_REQ;
 
-    char tmp[100] = {0};
+    char tmp[1024] = {0};
     sprintf(tmp, "%s %d OK\n", req->protocol, res->status || 200);
-    strcat(final, tmp);
+    string_append(final, tmp, strlen(tmp));
 
     if (res->headers && res->headers->size > 0) {
         struct kv_pair *p = NULL;
         FOREACH_KV(res->headers, p)
         {
             sprintf(tmp, "%s: %s\n", p->key, p->value);
-            strcat(final, tmp);
+            string_append(final, tmp, strlen(tmp));
         }
     }
 
-    sprintf(tmp, "Content-Length: %ld\n", strlen(res->buf));
-    strcat(final, tmp);
-    strcat(final, "\n");
-    strcat(final, res->buf);
+    if (res->file) {
+        sprintf(tmp, "Content-Length: %ld\n", res->file_sz);
+        string_append(final, tmp, strlen(tmp));
+        string_append(final, "\n", 1);
+        string_append(final, res->file, res->file_sz);
+    } else {
+        sprintf(tmp, "Content-Length: %ld\n", res->str->len);
+        string_append(final, tmp, strlen(tmp));
+        string_append(final, "\n", 1);
+        string_append(final, res->str->buf, res->str->len);
+    }
     return 1;
 BAD_REQ:
     return 0;

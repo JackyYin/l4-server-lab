@@ -71,7 +71,7 @@ __attribute__((unused)) static void io_uring_co_echo_handler(coroutine *co,
         }
         case IO_URING_OP_WRITE: {
             // this mean we've write all data
-            if (ret < conn->buf.capacity) {
+            if (ret < (int)conn->buf.capacity) {
                 goto RESET;
             }
 
@@ -93,9 +93,10 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
 {
     struct server_connection *conn = (struct server_connection *)data;
 
-    char fresbuf[2048] = {0};
+    string_t *fresstr = NULL;
     struct http_request req;
     struct http_response res;
+
     if (UNLIKELY((req.headers = kv_init()) == NULL)) {
         LOG_ERROR("failed to init kv struct...\n");
         return;
@@ -111,15 +112,30 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
         free(req.query);
         return;
     }
+    if (UNLIKELY((res.str = string_init(2048)) == NULL)) {
+        LOG_ERROR("failed to init string struct...\n");
+        free(req.headers);
+        free(req.query);
+        free(res.headers);
+        return;
+    }
+    if (UNLIKELY((fresstr = string_init(2048)) == NULL)) {
+        LOG_ERROR("failed to init string struct...\n");
+        free(req.headers);
+        free(req.query);
+        free(res.headers);
+        string_free(res.str);
+        return;
+    }
 
     while (1) {
         int to_yield = 0;
-        int yielded = co->yielded;
+        int64_t yielded = co->yielded;
 
         switch (conn->action) {
         case IO_URING_OP_READ: {
             if (UNLIKELY(yielded < 0)) {
-                LOG_ERROR("read error: %d...\n", yielded);
+                LOG_ERROR("read error: %ld...\n", yielded);
                 goto YIELD;
             }
 
@@ -129,7 +145,7 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
             }
 
             // request entity too large
-            if (UNLIKELY(yielded == conn->buf.capacity)) {
+            if (UNLIKELY(yielded == (int64_t)conn->buf.capacity)) {
                 char res[] = RESPONSE_413;
                 io_uring_push_write(conn->fd, res, strlen(res), (void *)conn,
                                     &ring);
@@ -143,17 +159,24 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
                 goto YIELD;
             }
 
-            route_handler *rh = NULL;
-            if ((rh = find_router(req.path, req.method)) == NULL) {
+            const struct router *rt = NULL;
+            if ((rt = find_router(req.path, req.method)) == NULL) {
                 char res[] = RESPONSE_404;
                 io_uring_push_write(conn->fd, res, strlen(res), (void *)conn,
                                     &ring);
                 goto YIELD;
             }
 
-            rh(&req, &res);
-            if (http_compose_response(&req, &res, fresbuf)) {
-                io_uring_push_write(conn->fd, fresbuf, strlen(fresbuf),
+            if (rt->filepath) {
+                ((int (*)(struct http_request *, struct http_response *,
+                          const char *))rt->fp)(&req, &res, rt->filepath);
+            } else {
+                ((int (*)(struct http_request *,
+                          struct http_response *))rt->fp)(&req, &res);
+            }
+
+            if (http_compose_response(&req, &res, fresstr)) {
+                io_uring_push_write(conn->fd, fresstr->buf, fresstr->len,
                                     (void *)conn, &ring);
             } else {
                 char res[] = RESPONSE_400;
@@ -165,7 +188,7 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
         }
         case IO_URING_OP_WRITE: {
             // this mean we've write all data
-            if (yielded < conn->buf.capacity) {
+            if (yielded < (int64_t)conn->buf.capacity) {
                 goto RESET;
             }
 
@@ -177,12 +200,13 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
         __close(conn->fd);
         memset(conn->buf.buf, 0, conn->buf.capacity);
         conn->buf.len = 0;
-        memset(&req, 0, sizeof(struct http_request) - sizeof(struct kv *) * 2);
+        memset(&req, 0, sizeof(struct http_request) - sizeof(void *) * 2);
         kv_reset(req.headers);
         kv_reset(req.query);
-        res.status = 0;
+        memset(&res, 0, sizeof(struct http_response) - sizeof(void *) * 2);
         kv_reset(res.headers);
-        memset(fresbuf, 0, 2048);
+        string_reset(res.str);
+        string_reset(fresstr);
 
     YIELD:
         co_yield(co, to_yield);

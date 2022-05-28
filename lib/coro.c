@@ -5,7 +5,8 @@
 #include "coro.h"
 
 __attribute__((naked, noinline, visibility("internal"))) void
-swap_context(co_context *old_context, co_context *new_context)
+swap_context(__attribute__((unused)) co_context *old_context,
+             __attribute__((unused)) co_context *new_context)
 {
 #if defined(__x86_64__)
     /*

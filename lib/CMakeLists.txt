@@ -3,6 +3,7 @@ add_library(l4-shared SHARED
     coro.c
     kv.c
     hashtable.c
+    strbuf.c
     socket.c
     http_parser.c
     epoll_handler.c
@@ -14,6 +15,7 @@ add_library(l4-static STATIC
     coro.c
     kv.c
     hashtable.c
+    strbuf.c
     socket.c
     http_parser.c
     epoll_handler.c

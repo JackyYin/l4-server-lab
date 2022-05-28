@@ -3,7 +3,7 @@
 
 #include "coro.h"
 
-void f(coroutine *co, void *data)
+void f(coroutine *co, __attribute__((unused)) void *data)
 {
     fprintf(stdout, "Hello !\n");
     for (int i = 0; i < 100; i++) {

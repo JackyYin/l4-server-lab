@@ -20,8 +20,10 @@
     ((type *)((size_t)p - offsetof(type, member)))
 
 #define __PASTE(A, B) A##B
+#define ___PASTE(A, B) __PASTE(A, B)
 
-#define __UNIQUE_ID(prefix) __PASTE(__PASTE(__UNIQUE_ID_, prefix), __COUNTER__)
+#define __UNIQUE_ID(prefix)                                                    \
+    ___PASTE(___PASTE(__UNIQUE_ID_, prefix), __COUNTER__)
 
 /*
  * C11 specification for ternary operator:

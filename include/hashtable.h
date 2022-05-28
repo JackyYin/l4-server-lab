@@ -16,12 +16,12 @@
 #define hash_min(val, bits)                                                    \
     (sizeof(val) <= 4 ? hash_32(val, bits) : hash_64(val, bits))
 
-static uint32_t hash_32(uint32_t val, uint8_t bits)
+__attribute__((unused)) static uint32_t hash_32(uint32_t val, uint8_t bits)
 {
     return (val * GOLDEN_RATIO_32) >> (32 - bits);
 }
 
-static uint64_t hash_64(uint64_t val, uint8_t bits)
+__attribute__((unused)) static uint64_t hash_64(uint64_t val, uint8_t bits)
 {
     return (val * GOLDEN_RATIO_64) >> (64 - bits);
 }

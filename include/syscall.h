@@ -8,7 +8,9 @@
 #include <sys/epoll.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/types.h>
 
 /*
  * Reference of syscall number:
@@ -23,8 +25,20 @@
 #define __NR_write 1
 #endif
 
+#ifndef __NR_open
+#define __NR_open 2
+#endif
+
 #ifndef __NR_close
 #define __NR_close 3
+#endif
+
+#ifndef __NR_stat
+#define __NR_stat 4
+#endif
+
+#ifndef __NR_fstat
+#define __NR_fstat 5
 #endif
 
 #ifndef __NR_socket
@@ -92,12 +106,27 @@ static inline int __read(int fd, void *buf, size_t count)
     return (int)syscall_3(__NR_read, fd, buf, count);
 }
 
+static inline int __open(const char *pathname, int flags)
+{
+    return (int)syscall_2(__NR_open, pathname, flags);
+}
+
 static inline int __write(int fd, const void *buf, size_t count)
 {
     return (int)syscall_3(__NR_write, fd, buf, count);
 }
 
 static inline int __close(int fd) { return (int)syscall_1(__NR_close, fd); }
+
+static inline int __stat(const char *pathname, struct stat *statbuf)
+{
+    return (int)syscall_2(__NR_stat, pathname, statbuf);
+}
+
+static inline int __fstat(int fd, struct stat *statbuf)
+{
+    return (int)syscall_2(__NR_fstat, fd, statbuf);
+}
 
 static inline int __socket(int domain, int type, int protocol)
 {

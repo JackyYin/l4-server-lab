@@ -1,13 +1,13 @@
 #ifndef _HTTP_PARSER_H
 #define _HTTP_PARSER_H
 
-#include "hashtable.h"
 #include "server.h"
+#include "strbuf.h"
 
 #define STR_TO_INT32(a, b, c, d)                                               \
     (int)((a) | ((b) << 8) | ((c) << 16) | ((d) << 24))
 
-static struct {
+__attribute__((unused)) static struct {
     int strn;
     int mask;
     int length;
@@ -48,9 +48,9 @@ static struct {
 
 int http_parse_request(struct http_request *req, char *buf, size_t buflen);
 
-void *find_router(const char *path, int method);
+const struct router *find_router(const char *path, int method);
 
 int http_compose_response(struct http_request *, struct http_response *,
-                          char *);
+                          string_t *);
 
 #endif

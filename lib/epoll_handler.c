@@ -1,5 +1,8 @@
+#define _GNU_SOURCE
 #include <netinet/in.h>
+#include <stdatomic.h>
 #include <stdbool.h>
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
 
