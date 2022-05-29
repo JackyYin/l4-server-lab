@@ -45,50 +45,6 @@ static void io_uring_push_write(int fd, void *buf, size_t buflen,
     sqe->user_data = (uint64_t)conn;
 }
 
-__attribute__((unused)) static void io_uring_co_echo_handler(coroutine *co,
-                                                             void *data)
-{
-    struct server_connection *conn = (struct server_connection *)data;
-
-    while (1) {
-        int to_yield = 0;
-        int ret = co->yielded;
-
-        switch (conn->action) {
-        case IO_URING_OP_READ: {
-            if (UNLIKELY(ret < 0)) {
-                LOG_ERROR("read error: %d...\n", ret);
-                goto YIELD;
-            }
-
-            if (UNLIKELY(ret == 0)) {
-                LOG_INFO("remote peer closed\n");
-                goto RESET;
-            }
-
-            to_yield = IO_URING_OP_WRITE;
-            goto YIELD;
-        }
-        case IO_URING_OP_WRITE: {
-            // this mean we've write all data
-            if (ret < (int)conn->buf.capacity) {
-                goto RESET;
-            }
-
-            to_yield = IO_URING_OP_READ;
-            goto YIELD;
-        }
-        }
-    RESET:
-        __close(conn->fd);
-        memset(conn->buf.buf, 0, conn->buf.capacity);
-        conn->buf.len = 0;
-
-    YIELD:
-        co_yield(co, to_yield);
-    }
-}
-
 static void io_uring_co_http_handler(coroutine *co, void *data)
 {
     struct server_connection *conn = (struct server_connection *)data;
@@ -112,7 +68,7 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
         free(req.query);
         return;
     }
-    if (UNLIKELY((res.str = string_init(2048)) == NULL)) {
+    if (UNLIKELY((res.str = string_init(1024)) == NULL)) {
         LOG_ERROR("failed to init string struct...\n");
         free(req.headers);
         free(req.query);
@@ -145,14 +101,14 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
             }
 
             // request entity too large
-            if (UNLIKELY(yielded == (int64_t)conn->buf.capacity)) {
+            if (UNLIKELY(yielded == (int64_t)conn->str->capacity)) {
                 char res[] = RESPONSE_413;
                 io_uring_push_write(conn->fd, res, strlen(res), (void *)conn,
                                     &ring);
                 goto YIELD;
             }
 
-            if (!http_parse_request(&req, conn->buf.buf, yielded)) {
+            if (!http_parse_request(&req, conn->str->buf, yielded)) {
                 char res[] = RESPONSE_400;
                 io_uring_push_write(conn->fd, res, strlen(res), (void *)conn,
                                     &ring);
@@ -188,7 +144,7 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
         }
         case IO_URING_OP_WRITE: {
             // this mean we've write all data
-            if (yielded < (int64_t)conn->buf.capacity) {
+            if (yielded < (int64_t)conn->str->capacity) {
                 goto RESET;
             }
 
@@ -198,8 +154,7 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
         }
     RESET:
         __close(conn->fd);
-        memset(conn->buf.buf, 0, conn->buf.capacity);
-        conn->buf.len = 0;
+        string_reset(conn->str);
         memset(&req, 0, sizeof(struct http_request) - sizeof(void *) * 2);
         kv_reset(req.headers);
         kv_reset(req.query);
@@ -269,7 +224,7 @@ void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
                 }
 
                 // push new fd to wait for read
-                io_uring_push_read(ret, conn->buf.buf, conn->buf.capacity,
+                io_uring_push_read(ret, conn->str->buf, conn->str->capacity,
                                    (void *)conn, &ring);
             ACCEPT_AGAIN:
                 io_uring_push_accept(svr->listen_fd,

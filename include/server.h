@@ -34,11 +34,10 @@ struct server_connection {
     uint32_t action;
     _Atomic uint32_t refcnt;
     coroutine *coro;
-    struct server_buffer buf;
+    string_t *str;
 };
 
 struct server_info {
-    int epoll_fd;
     int listen_fd;
 
     // flexible array member

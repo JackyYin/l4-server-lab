@@ -10,19 +10,17 @@ static int __prepare_connection(pthread_t tid, int fd,
                  NULL)) {
         LOG_ERROR("[%lu] Failed to create coroutine for fd: %d\n", tid, fd);
         return -1;
-    } else {
-#ifndef NDEBUG
-        LOG_INFO("[%lu] created coro %p for fd: %d\n", tid, conn->coro, fd);
-#endif
     }
 
+#ifndef NDEBUG
+    LOG_INFO("[%lu] created coro %p for fd: %d\n", tid, conn->coro, fd);
+#endif
+
     // This fd never accept connection before
-    if (!conn->buf.buf) {
-        if (UNLIKELY((conn->buf.buf = malloc(DEFAULT_SVR_BUFLEN)) == NULL)) {
-            conn->buf.capacity = 0;
-        } else {
-            conn->buf.capacity = DEFAULT_SVR_BUFLEN;
-        }
+    if (UNLIKELY(!conn->str &&
+                 (conn->str = string_init(DEFAULT_SVR_BUFLEN)) == NULL)) {
+        LOG_ERROR("[%lu] Failed to init string...\n", tid);
+        return -1;
     }
     conn->fd = fd;
     conn->action = 0;

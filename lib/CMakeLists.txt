@@ -9,7 +9,6 @@ add_library(l4-shared SHARED
     strbuf.c
     socket.c
     http_parser.c
-    epoll_handler.c
     io_uring_handler.c
     server.c)
 target_link_libraries(l4-shared ${CMAKE_THREAD_LIBS_INIT} uring)
@@ -20,7 +19,6 @@ add_library(l4-static STATIC
     strbuf.c
     socket.c
     http_parser.c
-    epoll_handler.c
     io_uring_handler.c
     server.c)
 target_link_libraries(l4-static ${CMAKE_THREAD_LIBS_INIT} uring)
