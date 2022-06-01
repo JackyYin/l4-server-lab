@@ -52,36 +52,19 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
     string_t *fresstr = NULL;
     struct http_request req;
     struct http_response res;
+    struct kv_pair static_kv_pairs[60];
 
-    if (UNLIKELY((req.headers = kv_init()) == NULL)) {
-        LOG_ERROR("failed to init kv struct...\n");
-        return;
-    }
-    if (UNLIKELY((req.query = kv_init()) == NULL)) {
-        LOG_ERROR("failed to init kv struct...\n");
-        free(req.headers);
-        return;
-    }
-    if (UNLIKELY((res.headers = kv_init()) == NULL)) {
-        LOG_ERROR("failed to init kv struct...\n");
-        free(req.headers);
-        free(req.query);
-        return;
-    }
+    req.headers = KV_INIT_WITH_BUF(&static_kv_pairs[0], 20);
+    req.query = KV_INIT_WITH_BUF(&static_kv_pairs[20], 20);
+    res.headers = KV_INIT_WITH_BUF(&static_kv_pairs[40], 20);
+
     if (UNLIKELY((res.str = string_init(1024)) == NULL)) {
         LOG_ERROR("failed to init string struct...\n");
-        free(req.headers);
-        free(req.query);
-        free(res.headers);
-        return;
+        goto EXIT;
     }
     if (UNLIKELY((fresstr = string_init(2048)) == NULL)) {
         LOG_ERROR("failed to init string struct...\n");
-        free(req.headers);
-        free(req.query);
-        free(res.headers);
-        string_free(res.str);
-        return;
+        goto EXIT;
     }
 
     while (1) {
@@ -154,18 +137,31 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
         }
     RESET:
         __close(conn->fd);
+        // reset request
+        req.method = 0;
+        req.path = NULL;
+        req.protocol = NULL;
+        // reset response
+        res.status = 0;
+        res.file = NULL;
+        res.file_sz = 0;
+        // clear kv
+        req.headers.size = 0;
+        req.query.size = 0;
+        res.headers.size = 0;
+        memset(static_kv_pairs, 0, sizeof(static_kv_pairs));
+        // clear string
         string_reset(conn->str);
-        memset(&req, 0, sizeof(struct http_request) - sizeof(void *) * 2);
-        kv_reset(req.headers);
-        kv_reset(req.query);
-        memset(&res, 0, sizeof(struct http_response) - sizeof(void *) * 2);
-        kv_reset(res.headers);
         string_reset(res.str);
         string_reset(fresstr);
 
     YIELD:
         co_yield(co, to_yield);
     }
+
+EXIT:
+    if (res.str)
+        string_free(res.str);
 }
 
 void io_uring_listen_loop(pthread_t tid, struct server_info *svr)

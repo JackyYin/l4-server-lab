@@ -79,7 +79,7 @@ static int http_parse_path(struct http_request *req, char **ppbuf, char *bufend)
                 break;
             *qkv_seperator = '\0';
 
-            kv_set_key_value(req->query, query, qkv_seperator + 1);
+            kv_set_key_value(&req->query, query, qkv_seperator + 1);
             char *qkv_end = strchr(qkv_seperator + 1, '&');
             if (!qkv_end || qkv_end >= end_of_path)
                 break;
@@ -138,7 +138,7 @@ static int http_parse_headers(struct http_request *req, char **ppbuf,
         if (LIKELY(header_seperator && header_seperator < end_of_header_line)) {
             *header_seperator = '\0';
             *end_of_header_line = '\0';
-            kv_set_key_value(req->headers, start, header_seperator + 2);
+            kv_set_key_value(&req->headers, start, header_seperator + 2);
         }
         start = end_of_header_line + 2;
     }
@@ -169,7 +169,7 @@ int http_parse_request(struct http_request *req, char *buf, size_t buflen)
     LOG_INFO("query: \n");
     {
         struct kv_pair *p = NULL;
-        FOREACH_KV(req->query, p)
+        FOREACH_KV(&req->query, p)
         {
             LOG_INFO("key: %s, value: %s\n", p->key, p->value);
         }
@@ -190,7 +190,7 @@ int http_parse_request(struct http_request *req, char *buf, size_t buflen)
     LOG_INFO("headers: \n");
     {
         struct kv_pair *p = NULL;
-        FOREACH_KV(req->headers, p)
+        FOREACH_KV(&req->headers, p)
         {
             LOG_INFO("key: %s, value: %s\n", p->key, p->value);
         }
@@ -254,9 +254,9 @@ int http_compose_response(struct http_request *req, struct http_response *res,
     sprintf(tmp, "%s %d OK\n", req->protocol, res->status || 200);
     string_append(final, tmp, strlen(tmp));
 
-    if (res->headers && res->headers->size > 0) {
+    if (res->headers.size > 0) {
         struct kv_pair *p = NULL;
-        FOREACH_KV(res->headers, p)
+        FOREACH_KV(&res->headers, p)
         {
             sprintf(tmp, "%s: %s\n", p->key, p->value);
             string_append(final, tmp, strlen(tmp));

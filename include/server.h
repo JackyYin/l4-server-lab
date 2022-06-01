@@ -48,8 +48,8 @@ struct http_request {
     int method;
     char *path;     // should be null-terminated
     char *protocol; // should be null-terminated
-    struct kv *query;
-    struct kv *headers;
+    struct kv query;
+    struct kv headers;
 };
 
 struct http_response {
@@ -57,7 +57,7 @@ struct http_response {
     char *file;
     size_t file_sz;
     string_t *str;
-    struct kv *headers;
+    struct kv headers;
 };
 
 struct router {
@@ -114,9 +114,9 @@ int global_static_router(__attribute__((unused)) struct http_request *request,
 #define ROUTER_STATIC(filepath, path)                                          \
     _ROUTER_STATIC(__COUNTER__, filepath, path)
 
-#define SET_RES_HEADER(k, v) kv_set_key_value(response->headers, k, v)
+#define SET_RES_HEADER(k, v) kv_set_key_value(&response->headers, k, v)
 
-#define SET_RES_MIME(v) kv_set_key_value(response->headers, "Content-Type", v)
+#define SET_RES_MIME(v) kv_set_key_value(&response->headers, "Content-Type", v)
 
 #define APPEND_RES_BODY(c, clen) string_append(response->str, c, clen)
 
