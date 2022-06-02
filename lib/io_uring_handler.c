@@ -11,8 +11,6 @@
 #define IO_URING_OP_READ (2)
 #define IO_URING_OP_WRITE (3)
 
-static struct io_uring ring;
-
 static void io_uring_push_accept(int fd, struct server_connection *conn,
                                  struct io_uring *ring)
 {
@@ -87,14 +85,14 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
             if (UNLIKELY(yielded == (int64_t)conn->str->capacity)) {
                 char res[] = RESPONSE_413;
                 io_uring_push_write(conn->fd, res, strlen(res), (void *)conn,
-                                    &ring);
+                                    (struct io_uring *)conn->svr->ring);
                 goto YIELD;
             }
 
             if (!http_parse_request(&req, conn->str->buf, yielded)) {
                 char res[] = RESPONSE_400;
                 io_uring_push_write(conn->fd, res, strlen(res), (void *)conn,
-                                    &ring);
+                                    (struct io_uring *)conn->svr->ring);
                 goto YIELD;
             }
 
@@ -102,7 +100,7 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
             if ((rt = find_router(req.path, req.method)) == NULL) {
                 char res[] = RESPONSE_404;
                 io_uring_push_write(conn->fd, res, strlen(res), (void *)conn,
-                                    &ring);
+                                    (struct io_uring *)conn->svr->ring);
                 goto YIELD;
             }
 
@@ -116,11 +114,12 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
 
             if (http_compose_response(&req, &res, fresstr)) {
                 io_uring_push_write(conn->fd, fresstr->buf, fresstr->len,
-                                    (void *)conn, &ring);
+                                    (void *)conn,
+                                    (struct io_uring *)conn->svr->ring);
             } else {
                 char res[] = RESPONSE_400;
                 io_uring_push_write(conn->fd, res, strlen(res), (void *)conn,
-                                    &ring);
+                                    (struct io_uring *)conn->svr->ring);
             }
 
             goto YIELD;
@@ -166,6 +165,7 @@ EXIT:
 
 void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
 {
+    struct io_uring ring;
     struct io_uring_params ring_params;
     struct io_uring_cqe *cqe;
     memset(&ring_params, 0, sizeof(struct io_uring_params));
@@ -181,14 +181,17 @@ void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
         return;
     }
 
+    // set this ring into server info
+    svr->ring = (void *)&ring;
+
     struct server_connection *conn = &svr->conns[svr->listen_fd];
-    io_uring_push_accept(svr->listen_fd, conn, &ring);
+    io_uring_push_accept(svr->listen_fd, conn, (struct io_uring *)svr->ring);
     while (1) {
-        io_uring_submit_and_wait(&ring, 1);
+        io_uring_submit_and_wait((struct io_uring *)svr->ring, 1);
         int ret;
         unsigned head;
         unsigned count = 0;
-        io_uring_for_each_cqe(&ring, head, cqe)
+        io_uring_for_each_cqe((struct io_uring *)svr->ring, head, cqe)
         {
             count++;
             ret = cqe->res;
@@ -211,9 +214,8 @@ void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
 
                 conn = &svr->conns[ret];
                 if (UNLIKELY(!conn->coro &&
-                             __prepare_connection(tid, ret, conn,
-                                                  io_uring_co_http_handler) <
-                                 0)) {
+                             __prepare_connection(
+                                 svr, ret, io_uring_co_http_handler) < 0)) {
                     LOG_ERROR("Failed to create connection...\n");
                     __close(ret);
                     goto ACCEPT_AGAIN;
@@ -221,10 +223,11 @@ void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
 
                 // push new fd to wait for read
                 io_uring_push_read(ret, conn->str->buf, conn->str->capacity,
-                                   (void *)conn, &ring);
+                                   (void *)conn, (struct io_uring *)svr->ring);
             ACCEPT_AGAIN:
                 io_uring_push_accept(svr->listen_fd,
-                                     &svr->conns[svr->listen_fd], &ring);
+                                     &svr->conns[svr->listen_fd],
+                                     (struct io_uring *)svr->ring);
                 continue;
             }
 
@@ -236,6 +239,6 @@ void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
             co_resume_value(conn->coro, ret);
         }
         /* io_uring_cqe_seen(&ring, cqe); */
-        io_uring_cq_advance(&ring, count);
+        io_uring_cq_advance((struct io_uring *)svr->ring, count);
     }
 }

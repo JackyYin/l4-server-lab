@@ -32,13 +32,16 @@ struct server_buffer {
 struct server_connection {
     int fd;
     uint32_t action;
-    _Atomic uint32_t refcnt;
+    /* _Atomic uint32_t refcnt; */
     coroutine *coro;
     string_t *str;
+    struct server_info *svr;
 };
 
 struct server_info {
     int listen_fd;
+    int epoll_fd;
+    void *ring; // actually struct io_uring*
 
     // flexible array member
     struct server_connection conns[];
