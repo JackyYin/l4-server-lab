@@ -5,6 +5,7 @@ find_package(Threads)
 add_library(l4-shared SHARED
     coro.c
     kv.c
+    murmurhash3.c
     hashtable.c
     strbuf.c
     socket.c
@@ -15,6 +16,7 @@ target_link_libraries(l4-shared ${CMAKE_THREAD_LIBS_INIT} uring)
 add_library(l4-static STATIC
     coro.c
     kv.c
+    murmurhash3.c
     hashtable.c
     strbuf.c
     socket.c
