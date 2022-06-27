@@ -6,6 +6,7 @@
 #include "arch/x86/syscall.h"
 #include <linux/io_uring.h>
 #include <sys/epoll.h>
+#include <sys/inotify.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -77,6 +78,18 @@
 #define __NR_epoll_ctl 233
 #endif
 
+#ifndef __NR_inotify_init
+#define __NR_inotify_init 253
+#endif
+
+#ifndef __NR_inotify_add_watch
+#define __NR_inotify_add_watch 254
+#endif
+
+#ifndef __NR_inotify_rm_watch
+#define __NR_inotify_rm_watch 255
+#endif
+
 #ifndef __NR_epoll_pwait
 #define __NR_epoll_pwait 281
 #endif
@@ -87,6 +100,14 @@
 
 #ifndef __NR_epoll_create1
 #define __NR_epoll_create1 291
+#endif
+
+#ifndef __NR_pipe2
+#define __NR_pipe2 293
+#endif
+
+#ifndef __NR_inotify_init1
+#define __NR_inotify_init1 294
 #endif
 
 #ifndef __NR_io_uring_setup
@@ -165,16 +186,39 @@ static inline int __epoll_create1(int flags)
     return (int)syscall_1(__NR_epoll_create1, flags);
 }
 
+static inline int __epoll_wait(int epfd, struct epoll_event *events,
+                               int maxevents, int timeout)
+{
+    return (int)syscall_4(__NR_epoll_wait, epfd, events, maxevents, timeout);
+}
+
 static inline int __epoll_ctl(int epfd, int op, int fd,
                               struct epoll_event *event)
 {
     return (int)syscall_4(__NR_epoll_ctl, epfd, op, fd, event);
 }
 
-static inline int __epoll_wait(int epfd, struct epoll_event *events,
-                               int maxevents, int timeout)
+static inline int __inotify_init() { return (int)syscall_0(__NR_inotify_init); }
+
+static inline int __inotify_add_watch(int fd, const char *pathname,
+                                      uint32_t mask)
 {
-    return (int)syscall_4(__NR_epoll_wait, epfd, events, maxevents, timeout);
+    return (int)syscall_3(__NR_inotify_add_watch, fd, pathname, mask);
+}
+
+static inline int __inotify_rm_watch(int fd, int wd)
+{
+    return (int)syscall_2(__NR_inotify_rm_watch, fd, wd);
+}
+
+static inline int __pipe2(int pipefd[2], int flags)
+{
+    return (int)syscall_2(__NR_pipe2, pipefd, flags);
+}
+
+static inline int __inotify_init1(int flags)
+{
+    return (int)syscall_1(__NR_inotify_init1, flags);
 }
 
 static inline int __io_uring_setup(unsigned int entries,

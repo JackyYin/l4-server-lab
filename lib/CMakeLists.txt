@@ -3,6 +3,7 @@ link_directories(${LIBURING_LIB_DIR})
 
 find_package(Threads)
 add_library(l4-shared SHARED
+    iouring_utils.c
     coro.c
     kv.c
     murmurhash3.c
@@ -14,6 +15,7 @@ add_library(l4-shared SHARED
     server.c)
 target_link_libraries(l4-shared ${CMAKE_THREAD_LIBS_INIT} uring)
 add_library(l4-static STATIC
+    iouring_utils.c
     coro.c
     kv.c
     murmurhash3.c

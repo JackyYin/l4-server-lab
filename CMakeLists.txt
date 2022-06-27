@@ -6,7 +6,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 set(CMAKE_C_FLAGS "-Wall -Wextra")
-set(CMAKE_C_FLAGS_DEBUG "-g")
+set(CMAKE_C_FLAGS_DEBUG "-g -DWATCH_STATIC_FILES")
 set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG")
 
 include(ExternalProject)
@@ -19,6 +19,7 @@ ExternalProject_Add(liburing
     BUILD_COMMAND make all
     BUILD_IN_SOURCE TRUE
     INSTALL_COMMAND make install
+    UPDATE_COMMAND  ""
 )
 
 set(LIBURING_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include)

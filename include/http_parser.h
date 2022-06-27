@@ -45,6 +45,11 @@ __attribute__((unused)) static struct {
 #define RESPONSE_400 "HTTP/1.1 400 Bad Request\r\n"
 #define RESPONSE_404 "HTTP/1.1 404 Not Found\r\n"
 #define RESPONSE_413 "HTTP/1.1 413 Request Entity Too Large\r\n"
+#define RESPONSE_500 "HTTP/1.1 500 Internal Server Error\r\n"
+
+#define HANDLER_ERR_SUCCESS (0)
+#define HANDLER_ERR_GENERAL (-(1 << 1))
+#define HANDLER_ERR_FILE_NOT_FOUND (-(1 << 3))
 
 int http_parse_request(struct http_request *req, char *buf, size_t buflen);
 

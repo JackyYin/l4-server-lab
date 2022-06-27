@@ -32,6 +32,8 @@ struct server_buffer {
 struct server_connection {
     int fd;
     uint32_t action;
+    int cur_steps;
+    int total_steps;
     /* _Atomic uint32_t refcnt; */
     coroutine *coro;
     string_t *str;
@@ -40,7 +42,9 @@ struct server_connection {
 
 struct server_info {
     int listen_fd;
-    int epoll_fd;
+#ifdef WATCH_STATIC_FILES
+    int pipefds[2];
+#endif
     void *ring; // actually struct io_uring*
 
     // flexible array member
@@ -51,6 +55,7 @@ struct http_request {
     int method;
     char *path;     // should be null-terminated
     char *protocol; // should be null-terminated
+    struct server_connection *conn;
     struct kv query;
     struct kv headers;
 };
@@ -58,6 +63,7 @@ struct http_request {
 struct http_response {
     int status;
     char *file;
+    int file_fd;
     size_t file_sz;
     string_t *str;
     struct kv headers;

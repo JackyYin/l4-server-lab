@@ -211,29 +211,30 @@ int global_static_router(__attribute__((unused)) struct http_request *request,
                          const char *filepath)
 {
     int fd;
-    static struct stat filestat;
+    struct stat filestat;
+#ifndef WATCH_STATIC_FILES
     static void *data;
 
     if (data) {
         goto STORE_BUF;
     }
+#endif
 
-    if (UNLIKELY((fd = __open(filepath, O_RDONLY)) < 0)) {
-        LOG_INFO("Failed to open file...\n");
-        return 0;
-    }
+    if (UNLIKELY((fd = __open(filepath, O_RDONLY)) < 0))
+        return HANDLER_ERR_FILE_NOT_FOUND;
 
     if (UNLIKELY(__fstat(fd, &filestat) < 0)) {
         LOG_INFO("Failed to retrieve file stat...\n");
         __close(fd);
-        return 0;
+        return HANDLER_ERR_GENERAL;
     }
 
+#ifndef WATCH_STATIC_FILES
     data = mmap(NULL, filestat.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (UNLIKELY(data == MAP_FAILED)) {
         LOG_INFO("Failed to mmap...\n");
         __close(fd);
-        return 0;
+        return HANDLER_ERR_GENERAL;
     }
 
 STORE_BUF:
@@ -241,7 +242,14 @@ STORE_BUF:
     response->file_sz = filestat.st_size;
     response->status = 200;
     SET_RES_MIME("text/html");
-    return 0;
+    return HANDLER_ERR_SUCCESS;
+#else
+    response->file_fd = fd;
+    response->file_sz = filestat.st_size;
+    response->status = 200;
+    SET_RES_MIME("text/html");
+    return HANDLER_ERR_SUCCESS;
+#endif
 }
 
 int http_compose_response(struct http_request *req, struct http_response *res,
@@ -268,6 +276,10 @@ int http_compose_response(struct http_request *req, struct http_response *res,
         string_append(final, tmp, strlen(tmp));
         string_append(final, "\n", 1);
         string_append(final, res->file, res->file_sz);
+    } else if (res->file_fd) {
+        sprintf(tmp, "Content-Length: %ld\n", res->file_sz);
+        string_append(final, tmp, strlen(tmp));
+        string_append(final, "\n", 1);
     } else {
         sprintf(tmp, "Content-Length: %ld\n", res->str->len);
         string_append(final, tmp, strlen(tmp));

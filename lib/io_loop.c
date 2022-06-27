@@ -4,44 +4,9 @@
 
 #include "http_parser.h"
 #include "iohandler.h"
+#include "iouring_utils.h"
 
 #define QD (1024)
-
-#define IO_URING_OP_ACCEPT (1)
-#define IO_URING_OP_READ (2)
-#define IO_URING_OP_WRITE (3)
-
-static void io_uring_push_accept(int fd, struct server_connection *conn,
-                                 struct io_uring *ring)
-{
-    struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-    io_uring_prep_accept(sqe, fd, NULL, NULL, 0);
-
-    conn->action = IO_URING_OP_ACCEPT;
-    sqe->user_data = (uint64_t)conn;
-}
-
-static void io_uring_push_read(int fd, void *buf, size_t buflen,
-                               struct server_connection *conn,
-                               struct io_uring *ring)
-{
-    struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-    io_uring_prep_recv(sqe, fd, buf, buflen, 0);
-
-    conn->action = IO_URING_OP_READ;
-    sqe->user_data = (uint64_t)conn;
-}
-
-static void io_uring_push_write(int fd, void *buf, size_t buflen,
-                                struct server_connection *conn,
-                                struct io_uring *ring)
-{
-    struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-    io_uring_prep_send(sqe, fd, buf, buflen, 0);
-
-    conn->action = IO_URING_OP_WRITE;
-    sqe->user_data = (uint64_t)conn;
-}
 
 static void io_uring_co_http_handler(coroutine *co, void *data)
 {
@@ -64,13 +29,14 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
         LOG_ERROR("failed to init string struct...\n");
         goto EXIT;
     }
+    req.conn = conn;
 
     while (1) {
         int to_yield = 0;
         int64_t yielded = co->yielded;
 
         switch (conn->action) {
-        case IO_URING_OP_READ: {
+        case IO_URING_OP_RECV: {
             if (UNLIKELY(yielded < 0)) {
                 LOG_ERROR("read error: %ld...\n", yielded);
                 goto YIELD;
@@ -83,59 +49,88 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
 
             // request entity too large
             if (UNLIKELY(yielded == (int64_t)conn->str->capacity)) {
-                char res[] = RESPONSE_413;
-                io_uring_push_write(conn->fd, res, strlen(res), (void *)conn,
-                                    (struct io_uring *)conn->svr->ring);
+                char buf[] = RESPONSE_413;
+                io_uring_push_send((struct io_uring *)conn->svr->ring, conn->fd,
+                                   buf, strlen(buf), (void *)conn, 0, 0);
                 goto YIELD;
             }
 
             if (!http_parse_request(&req, conn->str->buf, yielded)) {
-                char res[] = RESPONSE_400;
-                io_uring_push_write(conn->fd, res, strlen(res), (void *)conn,
-                                    (struct io_uring *)conn->svr->ring);
+                char buf[] = RESPONSE_400;
+                io_uring_push_send((struct io_uring *)conn->svr->ring, conn->fd,
+                                   buf, strlen(buf), (void *)conn, 0, 0);
                 goto YIELD;
             }
 
             const struct router *rt = NULL;
             if ((rt = find_router(req.path, req.method)) == NULL) {
-                char res[] = RESPONSE_404;
-                io_uring_push_write(conn->fd, res, strlen(res), (void *)conn,
-                                    (struct io_uring *)conn->svr->ring);
+                char buf[] = RESPONSE_404;
+                io_uring_push_send((struct io_uring *)conn->svr->ring, conn->fd,
+                                   buf, strlen(buf), (void *)conn, 0, 0);
                 goto YIELD;
             }
 
-            if (rt->filepath) {
-                ((int (*)(struct http_request *, struct http_response *,
-                          const char *))rt->fp)(&req, &res, rt->filepath);
-            } else {
-                ((int (*)(struct http_request *,
-                          struct http_response *))rt->fp)(&req, &res);
+            int handle_err =
+                (rt->filepath)
+                    ? ((int (*)(struct http_request *, struct http_response *,
+                                const char *))rt->fp)(&req, &res, rt->filepath)
+                    : ((int (*)(struct http_request *,
+                                struct http_response *))rt->fp)(&req, &res);
+
+            if (UNLIKELY(handle_err == HANDLER_ERR_FILE_NOT_FOUND)) {
+                char buf[] = RESPONSE_404;
+                io_uring_push_send((struct io_uring *)conn->svr->ring, conn->fd,
+                                   buf, strlen(buf), (void *)conn, 0, 0);
+                goto YIELD;
+            }
+
+            if (UNLIKELY(handle_err == HANDLER_ERR_GENERAL)) {
+                char buf[] = RESPONSE_500;
+                io_uring_push_send((struct io_uring *)conn->svr->ring, conn->fd,
+                                   buf, strlen(buf), (void *)conn, 0, 0);
+                goto YIELD;
             }
 
             if (http_compose_response(&req, &res, fresstr)) {
-                io_uring_push_write(conn->fd, fresstr->buf, fresstr->len,
-                                    (void *)conn,
-                                    (struct io_uring *)conn->svr->ring);
+#ifdef WATCH_STATIC_FILES
+                io_uring_push_send((struct io_uring *)conn->svr->ring, conn->fd,
+                                   fresstr->buf, fresstr->len, (void *)conn,
+                                   MSG_MORE, IOSQE_IO_LINK);
+                io_uring_push_splice((struct io_uring *)conn->svr->ring,
+                                     res.file_fd, 0, conn->svr->pipefds[1], -1,
+                                     res.file_sz, (void *)conn, IOSQE_IO_LINK);
+                io_uring_push_splice((struct io_uring *)conn->svr->ring,
+                                     conn->svr->pipefds[0], -1, conn->fd, -1,
+                                     res.file_sz, (void *)conn, 0);
+#else
+                io_uring_push_send((struct io_uring *)conn->svr->ring, conn->fd,
+                                   fresstr->buf, fresstr->len, (void *)conn, 0,
+                                   0);
+#endif
             } else {
-                char res[] = RESPONSE_400;
-                io_uring_push_write(conn->fd, res, strlen(res), (void *)conn,
-                                    (struct io_uring *)conn->svr->ring);
+                char buf[] = RESPONSE_400;
+                io_uring_push_send((struct io_uring *)conn->svr->ring, conn->fd,
+                                   buf, strlen(buf), (void *)conn, 0, 0);
             }
 
             goto YIELD;
         }
-        case IO_URING_OP_WRITE: {
-            // this mean we've write all data
-            if (yielded < (int64_t)conn->str->capacity) {
+        case IO_URING_OP_SEND:
+        case IO_URING_OP_SPLICE: {
+            if (++conn->cur_steps == conn->total_steps)
                 goto RESET;
-            }
 
-            to_yield = IO_URING_OP_READ;
+            // this mean we've write all data
+            /* if (yielded < (int64_t)conn->str->capacity) { */
+            /*     goto RESET; */
+            /* } */
             goto YIELD;
         }
         }
     RESET:
         __close(conn->fd);
+        conn->cur_steps = 0;
+        conn->total_steps = 0;
         // reset request
         req.method = 0;
         req.path = NULL;
@@ -144,6 +139,7 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
         res.status = 0;
         res.file = NULL;
         res.file_sz = 0;
+        res.file_fd = 0;
         // clear kv
         req.headers.size = 0;
         req.query.size = 0;
@@ -185,7 +181,7 @@ void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
     svr->ring = (void *)&ring;
 
     struct server_connection *conn = &svr->conns[svr->listen_fd];
-    io_uring_push_accept(svr->listen_fd, conn, (struct io_uring *)svr->ring);
+    io_uring_push_accept((struct io_uring *)svr->ring, svr->listen_fd, conn, 0);
     while (1) {
         io_uring_submit_and_wait((struct io_uring *)svr->ring, 1);
         int ret;
@@ -196,9 +192,10 @@ void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
             count++;
             ret = cqe->res;
             conn = (struct server_connection *)cqe->user_data;
+
             if (UNLIKELY(!conn)) {
-                LOG_ERROR("Something went wrong, no user_data in cqe!\n");
-                continue;
+                LOG_ERROR("no coroutine, abort!\n");
+                exit(-1);
             }
 
             if (conn->action == IO_URING_OP_ACCEPT) {
@@ -221,18 +218,14 @@ void io_uring_listen_loop(pthread_t tid, struct server_info *svr)
                     goto ACCEPT_AGAIN;
                 }
 
-                // push new fd to wait for read
-                io_uring_push_read(ret, conn->str->buf, conn->str->capacity,
-                                   (void *)conn, (struct io_uring *)svr->ring);
+                // push new fd to wait for recv
+                io_uring_push_recv((struct io_uring *)svr->ring, ret,
+                                   conn->str->buf, conn->str->capacity,
+                                   (void *)conn, 0);
             ACCEPT_AGAIN:
-                io_uring_push_accept(svr->listen_fd,
-                                     &svr->conns[svr->listen_fd],
-                                     (struct io_uring *)svr->ring);
-                continue;
-            }
-
-            if (UNLIKELY(!conn->coro)) {
-                LOG_ERROR("Something went wrong, coroutine not found!\n");
+                io_uring_push_accept((struct io_uring *)svr->ring,
+                                     svr->listen_fd,
+                                     &svr->conns[svr->listen_fd], 0);
                 continue;
             }
 
