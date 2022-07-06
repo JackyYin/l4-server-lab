@@ -22,8 +22,23 @@ ExternalProject_Add(liburing
     UPDATE_COMMAND  ""
 )
 
+ExternalProject_Add(libmagic
+    PREFIX file-5.42
+    URL ftp://ftp.astron.com/pub/file/file-5.42.tar.gz
+    CONFIGURE_COMMAND ./configure
+        --enable-static=yes
+        --enable-shared=yes
+        --prefix=${CMAKE_CURRENT_BINARY_DIR}
+    BUILD_COMMAND make all
+    BUILD_IN_SOURCE TRUE
+    INSTALL_COMMAND make install
+    UPDATE_COMMAND  ""
+)
+
 set(LIBURING_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include)
 set(LIBURING_LIB_DIR ${CMAKE_CURRENT_BINARY_DIR}/lib)
+set(LIBMAGIC_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include)
+set(LIBMAGIC_LIB_DIR ${CMAKE_CURRENT_BINARY_DIR}/lib)
 
 include_directories(include)
 
