@@ -34,6 +34,8 @@ ROUTER(GET, /simple/y)
 
 ROUTER_STATIC(./tests/fib.html, /simple/fib)
 
+ROUTER_STATIC(./tests/gccegg-65.png, /gccpic)
+
 int main(int argc, char **argv)
 {
     char addr[] = "0.0.0.0";

@@ -1,7 +1,25 @@
 #include <fcntl.h>
-#include <sys/mman.h>
+#include <magic.h>
 
 #include "http_parser.h"
+
+static magic_t magic_instance;
+
+static void __attribute__((constructor)) magic_init()
+{
+    magic_instance = magic_open(MAGIC_MIME_TYPE | MAGIC_CHECK);
+    if (magic_instance)
+        printf("magic inited....\n");
+
+    if (magic_load(magic_instance, NULL) == 0)
+        printf("magic loaded....\n");
+}
+
+static void __attribute__((destructor)) magic_uninit()
+{
+    magic_close(magic_instance);
+    printf("magic closed....\n");
+}
 
 static int str_to_int32(char *buf)
 {
@@ -207,7 +225,7 @@ BAD_REQ:
 }
 
 int global_static_router(__attribute__((unused)) struct http_request *request,
-                         __attribute__((unused)) struct http_response *response,
+                         struct http_response *response,
                          const char *filepath)
 {
     int fd;
@@ -229,6 +247,12 @@ int global_static_router(__attribute__((unused)) struct http_request *request,
         return HANDLER_ERR_GENERAL;
     }
 
+    const char *mime_str = NULL;
+    if (UNLIKELY((mime_str = magic_descriptor(magic_instance, fd)) == NULL)) {
+        printf("magic error: %s\n", magic_error(magic_instance));
+        return HANDLER_ERR_GENERAL;
+    }
+
 #ifndef WATCH_STATIC_FILES
     data = mmap(NULL, filestat.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (UNLIKELY(data == MAP_FAILED)) {
@@ -239,17 +263,13 @@ int global_static_router(__attribute__((unused)) struct http_request *request,
 
 STORE_BUF:
     response->file = data;
-    response->file_sz = filestat.st_size;
-    response->status = 200;
-    SET_RES_MIME("text/html");
-    return HANDLER_ERR_SUCCESS;
 #else
     response->file_fd = fd;
+#endif
     response->file_sz = filestat.st_size;
     response->status = 200;
-    SET_RES_MIME("text/html");
+    SET_RES_MIME((char *)mime_str);
     return HANDLER_ERR_SUCCESS;
-#endif
 }
 
 int http_compose_response(struct http_request *req, struct http_response *res,
@@ -259,7 +279,8 @@ int http_compose_response(struct http_request *req, struct http_response *res,
         goto BAD_REQ;
 
     char tmp[1024] = {0};
-    sprintf(tmp, "%s %d OK\n", req->protocol, res->status || 200);
+    int status = res->status ? res->status : 200;
+    sprintf(tmp, "%s %d OK\n", req->protocol, status);
     string_append(final, tmp, strlen(tmp));
 
     if (res->headers.size > 0) {
