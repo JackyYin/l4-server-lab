@@ -1,6 +1,5 @@
+#include <fcntl.h>
 #include <pthread.h>
-#include <sys/types.h>
-#include <unistd.h>
 
 #include "server.h"
 
@@ -79,6 +78,13 @@ struct server_info *create_server(const char *addr, uint16_t port)
         LOG_ERROR("Failed to create listening socket\n");
         goto FREE;
     }
+
+#ifdef WATCH_STATIC_FILES
+    if (UNLIKELY(__pipe2(svr->pipefds, O_CLOEXEC | O_NONBLOCK) < 0)) {
+        LOG_ERROR("Failed to create pipe fd\n");
+        goto FREE;
+    }
+#endif
 
     return svr;
 // fall through

@@ -1,13 +1,13 @@
 #ifndef _HTTP_PARSER_H
 #define _HTTP_PARSER_H
 
-#include "hashtable.h"
 #include "server.h"
+#include "strbuf.h"
 
 #define STR_TO_INT32(a, b, c, d)                                               \
     (int)((a) | ((b) << 8) | ((c) << 16) | ((d) << 24))
 
-static struct {
+__attribute__((unused)) static struct {
     int strn;
     int mask;
     int length;
@@ -45,12 +45,17 @@ static struct {
 #define RESPONSE_400 "HTTP/1.1 400 Bad Request\r\n"
 #define RESPONSE_404 "HTTP/1.1 404 Not Found\r\n"
 #define RESPONSE_413 "HTTP/1.1 413 Request Entity Too Large\r\n"
+#define RESPONSE_500 "HTTP/1.1 500 Internal Server Error\r\n"
+
+#define HANDLER_ERR_SUCCESS (0)
+#define HANDLER_ERR_GENERAL (-(1 << 1))
+#define HANDLER_ERR_FILE_NOT_FOUND (-(1 << 3))
 
 int http_parse_request(struct http_request *req, char *buf, size_t buflen);
 
-void *find_router(const char *path, int method);
+const struct router *find_router(const char *path, int method);
 
 int http_compose_response(struct http_request *, struct http_response *,
-                          char *);
+                          string_t *);
 
 #endif

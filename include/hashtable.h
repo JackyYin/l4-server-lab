@@ -8,24 +8,6 @@
 
 #include "common.h"
 
-#define GOLDEN_RATIO_32 0x61C88647
-#define GOLDEN_RATIO_64 0x61C8864680B583EBull
-
-/* Use hash_32 when possible to allow for fast 32bit hashing in 64bit kernels.
- */
-#define hash_min(val, bits)                                                    \
-    (sizeof(val) <= 4 ? hash_32(val, bits) : hash_64(val, bits))
-
-static uint32_t hash_32(uint32_t val, uint8_t bits)
-{
-    return (val * GOLDEN_RATIO_32) >> (32 - bits);
-}
-
-static uint64_t hash_64(uint64_t val, uint8_t bits)
-{
-    return (val * GOLDEN_RATIO_64) >> (64 - bits);
-}
-
 struct hlist_head {
     struct hlist_node *first;
 };
@@ -42,15 +24,18 @@ struct hmap_element {
 
 struct hmap {
     uint8_t bits;
+    uint64_t (*hash_func)(const void *key, uint8_t bits);
     // flexible array member
     struct hlist_head hl[]; // head list
 };
 
-struct hmap *hmap_new(uint8_t bits);
+struct hmap *str_hmap_new(uint8_t bits);
 
-void *hmap_get(struct hmap *hashmap, uint64_t key);
+struct hmap *int_hmap_new(uint8_t bits);
 
-void hmap_insert(struct hmap *hashmap, uint64_t key, void *value);
+void *hmap_get(struct hmap *hashmap, const void *key);
+
+void hmap_insert(struct hmap *hashmap, const void *key, void *value);
 
 void hmap_delete(struct hmap *hashmap);
 

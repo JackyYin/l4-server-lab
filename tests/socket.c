@@ -3,29 +3,38 @@
 
 #include "server.h"
 
-ROUTER(GET, /simple/x)
+ROUTER(GET, /fib)
 {
-    sprintf(response->buf, "Something interesting x...\n");
-    response->status = 200;
+    static long a = 0;
+    static long b = 1;
+    char content[100];
 
-    SET_RESPONSE_MIME("text/plain");
-    SET_RESPONSE_HEADER("Header1", "Value1");
-    SET_RESPONSE_HEADER("Header2", "Value2");
-    SET_RESPONSE_HEADER("Header3", "Value3");
+    long res = a + b;
+
+    sprintf(content, "%ld\n", res);
+    APPEND_RES_BODY(content, strlen(content));
+    SET_RES_MIME("text/plain");
+    response->status = 200;
+    a = b;
+    b = res;
     return 0;
 }
 
 ROUTER(GET, /simple/y)
 {
-    sprintf(response->buf, "Something interesting y...\n");
+    char *content =  "Something interesting y...";
+    APPEND_RES_BODY(content, strlen(content));
+    SET_RES_MIME("text/plain");
+    SET_RES_HEADER("Header1", "Value1");
+    SET_RES_HEADER("Header2", "Value2");
+    SET_RES_HEADER("Header3", "Value3");
     response->status = 200;
-
-    SET_RESPONSE_MIME("text/plain");
-    SET_RESPONSE_HEADER("Header1", "Value1");
-    SET_RESPONSE_HEADER("Header2", "Value2");
-    SET_RESPONSE_HEADER("Header3", "Value3");
     return 0;
 }
+
+ROUTER_STATIC(./tests/fib.html, /simple/fib)
+
+ROUTER_STATIC(./tests/gccegg-65.png, /gccpic)
 
 int main(int argc, char **argv)
 {

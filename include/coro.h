@@ -3,7 +3,7 @@
 
 #include "common.h"
 
-#define STACK_SZ (1 << 13)
+#define STACK_SZ (1 << 14)
 
 enum co_status { CO_STATUS_CREATED, CO_STATUS_STARTED, CO_STATUS_STOPPED };
 
