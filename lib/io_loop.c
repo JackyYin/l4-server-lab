@@ -17,6 +17,8 @@ static void io_uring_co_http_handler(coroutine *co, void *data)
     struct http_response res;
     struct kv_pair static_kv_pairs[60];
 
+    memset(&req, 0, sizeof(struct http_request));
+    memset(&res, 0, sizeof(struct http_response));
     req.headers = KV_INIT_WITH_BUF(&static_kv_pairs[0], 20);
     req.query = KV_INIT_WITH_BUF(&static_kv_pairs[20], 20);
     res.headers = KV_INIT_WITH_BUF(&static_kv_pairs[40], 20);
