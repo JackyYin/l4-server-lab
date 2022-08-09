@@ -28,7 +28,7 @@ swap_context(__attribute__((unused)) co_context *old_context,
         "movq   %rcx, 72(%rdi)\n\t"
         "movq   %r8, 80(%rdi)\n\t"
         "movq   %r9, 88(%rdi)\n\t"
-        "movq   (%rsp), %rcx\n\t" /* RPI */
+        "movq   (%rsp), %rcx\n\t" /* RIP */
         "movq   %rcx, 96(%rdi)\n\t"
         "leaq   8(%rsp), %rcx\n\t" /* RSP */
         "movq   %rcx, 104(%rdi)\n\t"
@@ -46,7 +46,7 @@ swap_context(__attribute__((unused)) co_context *old_context,
         "movq   88(%rsi), %r9\n\t"
         "movq   96(%rsi), %r10\n\t" /* save to R10 before RSI changed */
         "movq   56(%rsi), %rsi\n\t"
-        "jmpq   *%r10\n\t" /* go to old RPI ? */
+        "jmpq   *%r10\n\t" /* go to old RIP ? */
     );
 #else
 #error Only x86_64 supported.
@@ -108,18 +108,34 @@ void co_free(coroutine *co) { free(co); }
 
 void co_yield(coroutine *co, int64_t value)
 {
+    if (UNLIKELY(co->padding)) {
+        LOG_ERROR("stack overflowed!!!\n");
+        exit(-1);
+    }
+
     co->yielded = value;
     swap_context(&co->context, &co->caller);
 }
 
 int64_t co_resume(coroutine *co)
 {
+    if (UNLIKELY(co->padding)) {
+        LOG_ERROR("stack overflowed!!!\n");
+        exit(-1);
+    }
+
     swap_context(&co->caller, &co->context);
     return co->yielded;
 }
 
 int64_t co_resume_value(coroutine *co, int64_t value)
 {
+    if (UNLIKELY(co->padding)) {
+        LOG_ERROR("stack overflowed!!!\n");
+        exit(-1);
+    }
+
     co->yielded = value;
-    return co_resume(co);
+    swap_context(&co->caller, &co->context);
+    return co->yielded;
 }

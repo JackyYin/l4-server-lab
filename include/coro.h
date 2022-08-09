@@ -3,7 +3,7 @@
 
 #include "common.h"
 
-#define STACK_SZ (1 << 14)
+#define STACK_SZ (1 << 15)
 
 enum co_status { CO_STATUS_CREATED, CO_STATUS_STARTED, CO_STATUS_STOPPED };
 
@@ -14,6 +14,7 @@ typedef struct {
     co_context caller;
     int64_t yielded;
     enum co_status status;
+    int64_t padding;
     uint8_t stack[STACK_SZ];
 } coroutine;
 
