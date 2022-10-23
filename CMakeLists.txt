@@ -35,10 +35,25 @@ ExternalProject_Add(libmagic
 	UPDATE_COMMAND  ""
 )
 
+ExternalProject_Add(elfutils
+	PREFIX elfutils
+	URL https://sourceware.org/elfutils/ftp/elfutils-latest.tar.bz2
+	CONFIGURE_COMMAND ./configure
+		--disable-debuginfod
+		--disable-libdebuginfod
+		--prefix=${CMAKE_CURRENT_BINARY_DIR}
+	BUILD_COMMAND make all
+	BUILD_IN_SOURCE TRUE
+	INSTALL_COMMAND make install
+	UPDATE_COMMAND  ""
+)
+
 set(LIBURING_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include)
 set(LIBURING_LIB_DIR ${CMAKE_CURRENT_BINARY_DIR}/lib)
 set(LIBMAGIC_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include)
 set(LIBMAGIC_LIB_DIR ${CMAKE_CURRENT_BINARY_DIR}/lib)
+set(LIBELF_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include)
+set(LIBELF_LIB_DIR ${CMAKE_CURRENT_BINARY_DIR}/lib)
 
 include_directories(include)
 
