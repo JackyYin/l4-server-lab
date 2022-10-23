@@ -32,19 +32,6 @@ static int str_to_int32(char *buf)
 
 ROUTER(GET, thisisateapot) { return 0; }
 
-const struct router *find_router(const char *path, int method)
-{
-    const struct router *iter;
-
-    FOREACH_ROUTER(iter)
-    {
-        if ((method & iter->method) && strcmp(path, iter->path) == 0) {
-            return iter;
-        }
-    }
-    return NULL;
-}
-
 static void trim_spaces(char **ppbuf, char *bufend)
 {
     while (*ppbuf < bufend && (*ppbuf)[0] == ' ')
